@@ -2,6 +2,8 @@ import os
 import pandas as pd
 from functools import reduce
 
+'''merge the data into desired format'''
+
 data_folder = './Data/EastHsinchu'
 feature_dfs = {} 
 
@@ -39,3 +41,19 @@ merged_df = reduce(lambda left, right: pd.merge(left, right, on=["Month", "Date"
 merged_df = merged_df.sort_values(by=["Month", "Date", "Hour"]).reset_index(drop=True)
 merged_df.to_csv("master_EastHsinchu.csv", index=False)
 
+'''split the final column'''
+
+file = pd.read_csv('master_EastHsinchu.csv')
+
+last_col = file.columns[-1]
+
+split_data = file[last_col].astype(str).str.split(r'[,/]', n=1, expand=True)
+
+file["WindSpeed"] = split_data[0]
+file["WindDirection"] = split_data[1]
+
+# Drop the original combined column
+file.drop(columns=[last_col], inplace=True)
+
+# Save to a new CSV
+file.to_csv('split_master_EastHsinchu.csv', index=False)
