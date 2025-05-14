@@ -37,5 +37,5 @@ for subfolder in os.listdir(data_folder):
 merged_df = reduce(lambda left, right: pd.merge(left, right, on=["Month", "Date", "Hour"], how="outer"), feature_dfs.values())
 
 merged_df = merged_df.sort_values(by=["Month", "Date", "Hour"]).reset_index(drop=True)
-merged_df.to_csv("master_features_by_hour.csv", index=False)
+merged_df.to_csv("master_EastHsinchu.csv", index=False)
 
