@@ -52,8 +52,6 @@ split_data = file[last_col].astype(str).str.split(r'[,/]', n=1, expand=True)
 file["WindSpeed"] = split_data[0]
 file["WindDirection"] = split_data[1]
 
-# Drop the original combined column
 file.drop(columns=[last_col], inplace=True)
 
-# Save to a new CSV
 file.to_csv('split_master_EastHsinchu.csv', index=False)
