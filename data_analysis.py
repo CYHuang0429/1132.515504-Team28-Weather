@@ -58,6 +58,6 @@ file["WindDirection"] = split_data[1]
 file.drop(columns=[last_col], inplace=True)
 
 file['Date'] = pd.to_datetime(file['Month'] + '-' + file['Date'].astype(str).str.zfill(2))
-file.drop(columns=['Month'], inplace=False).to_csv('merged_date_EastHsinchu.csv', index=False)
+file.drop(columns=['Month'], inplace=False).to_csv('Masters/Master.csv', index=False)
 
 file.to_csv('Masters/Master.csv', index=False)
