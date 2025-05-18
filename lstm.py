@@ -186,21 +186,6 @@ with torch.no_grad():
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # weather['month'] = weather['date'].dt.month
 # weather_naive = weather[['date', 'temperature']].copy(deep=True)
 # weather_naive['prev_temperature'] = weather_naive['temperature'].shift(1)
