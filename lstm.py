@@ -46,7 +46,7 @@ warnings.filterwarnings('ignore')
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using \"{device}\" to train the model.")
 
-weather = pd.read_csv("Masters/split_master_EastHsinchu.csv")
+weather = pd.read_csv("Masters/Master.csv")
 weather = weather[["Month", "Date", "Hour", "AirTemperature", "Precipitation", "RelativeHumidity", "StationPressure", "WindSpeed", "WindDirection"]]
 
 #weather = weather.rename(columns={'temp': 'AirTemperature', 'datetime': 'Date'})
