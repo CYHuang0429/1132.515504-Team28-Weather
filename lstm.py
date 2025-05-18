@@ -46,13 +46,14 @@ warnings.filterwarnings('ignore')
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using \"{device}\" to train the model.")
 
-weather = pd.read_csv("Masters/split_master_EastHsinchu.csv")
+weather = pd.read_csv("Masters/Master.csv")
 weather = weather[["Month", "Date", "Hour", "AirTemperature", "Precipitation", "RelativeHumidity", "StationPressure", "WindSpeed", "WindDirection"]]
 
 #weather = weather.rename(columns={'temp': 'AirTemperature', 'datetime': 'Date'})
 weather['Date'] = pd.to_datetime(weather['Date'])
 weather.set_index('Date', inplace=True)
 # print(weather.head(5))
+weather[["AirTemperature", "Precipitation", "RelativeHumidity", "StationPressure", "WindSpeed", "WindDirection"]] = weather[["AirTemperature", "Precipitation", "RelativeHumidity", "StationPressure", "WindSpeed", "WindDirection"]].apply(pd.to_numeric, errors='coerce')
 
 weather.dropna(inplace=True)
 
@@ -63,6 +64,9 @@ for col in target:
     temp_df = weather[[col]].copy(deep=True)
     temp_df['prev'] = temp_df[col].shift(1)
     temp_df.dropna(inplace=True)
+    temp_df[col]=pd.to_numeric(temp_df[col], errors='coerce')
+    temp_df['prev'] = pd.to_numeric(temp_df['prev'], errors='coerce')
+
     temp_df['difference'] = temp_df[col] - temp_df['prev']
     temp_df['square_error'] = temp_df['difference'] ** 2
     mse = temp_df['square_error'].mean()
@@ -126,7 +130,7 @@ for Xbatch, Ybatch in train_loader:
 class LSTM(nn.Module):
     def __init__(self, inputSize, hiddenSize, outputSize):
         super(LSTM, self).__init__()
-        self.lstm = nn.LSTM(inputSize, hiddenSize, batchFirst=True)
+        self.lstm = nn.LSTM(inputSize, hiddenSize, batch_first=True)
         self.linear = nn.Linear(hiddenSize, outputSize)
 
     def forward(self, x):
