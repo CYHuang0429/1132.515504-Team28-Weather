@@ -41,6 +41,7 @@ from sklearn.preprocessing import StandardScaler
 import warnings
 from torch.utils.data import DataLoader, Dataset
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 warnings.filterwarnings('ignore')
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -187,6 +188,37 @@ with torch.no_grad():
     testLoss /= len(test_loader.dataset)
     print(f"Test Loss: {testLoss:.4f}")
 
+# 反標準化
+XtestTensor = torch.tensor(Xtest, dtype=torch.float32).to(device)
+model.eval()
+with torch.no_grad():
+    YpredScaled = model(XtestTensor).cpu().numpy()  
+
+YtrueScaled = Ytest 
+
+YpredReal = targetScaler.inverse_transform(YpredScaled)
+YtrueReal = targetScaler.inverse_transform(YtrueScaled)
+
+
+for i, name in enumerate(["AirTemperature", "Precipitation", "WindSpeed"]):
+    mae = mean_absolute_error(YtrueReal[:, i], YpredReal[:, i])
+    rmse = mean_squared_error(YtrueReal[:, i], YpredReal[:, i], squared=False)
+    r2 = r2_score(YtrueReal[:, i], YpredReal[:, i])
+    print(f"{name} → MAE: {mae:.2f}, RMSE: {rmse:.2f}, R²: {r2:.4f}")
+
+
+'''
+ 模型強化：加入 Dropout / 多層 LSTM / Early Stopping
+如果你覺得模型表現還能提升，可以：
+
+加入 dropout=0.2
+
+設 num_layers=2 的多層 LSTM
+
+用 ReduceLROnPlateau 或 early stopping 減少過擬合
+
+
+'''
 
 
 
