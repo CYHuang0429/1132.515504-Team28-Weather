@@ -10,6 +10,8 @@ from sklearn.metrics import (
     mean_squared_error,
     r2_score
 )
+import warnings
+warnings.filterwarnings('ignore')
 
 # 1) Settings & Device
 window_size = 24
