@@ -155,7 +155,11 @@ criterion = nn.MSELoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
 #訓練
+<<<<<<< Updated upstream
 numEpochs = 100
+=======
+numEpochs = 2
+>>>>>>> Stashed changes
 for epoch in range(numEpochs):
     model.train()
     trainLoss = 0.0
@@ -206,7 +210,11 @@ YtrueReal[:, 0] = np.expm1(YtrueReal[:, 0])
 for i, name in enumerate(["Precipitation"]):
 #for i, name in enumerate(["AirTemperature", "Precipitation", "WindSpeed"]):
     mae = mean_absolute_error(YtrueReal[:, i], YpredReal[:, i])
+<<<<<<< Updated upstream
     rmse = root_mean_squared_error(YtrueReal[:, i], YpredReal[:, i])
+=======
+    rmse = mean_squared_error(YtrueReal[:, i], YpredReal[:, i])
+>>>>>>> Stashed changes
     r2 = r2_score(YtrueReal[:, i], YpredReal[:, i])
     print(f"{name} → MAE: {mae:.2f}, RMSE: {rmse:.2f}, R²: {r2:.4f}")
 
