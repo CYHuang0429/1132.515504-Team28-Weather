@@ -116,13 +116,16 @@ class WeatherDataset(Dataset):
     def __getitem__(self, idx):
         return self.X[idx], self.Y[idx]
 # train_test_split
-Xtrain, Xtest, Ytrain, Ytest = train_test_split(X, Y, test_size=0.2, shuffle=False)
+XtrainFull, Xtest, YtrainFull, Ytest = train_test_split(X, Y, test_size=0.1, shuffle=False)
+Xtrain, Xval, Ytrain, Yval = train_test_split(XtrainFull, YtrainFull, test_size=0.1111, shuffle=False)
 
 train_dataset = WeatherDataset(Xtrain, Ytrain)
+val_dataset = WeatherDataset(Xval, Yval)
 test_dataset = WeatherDataset(Xtest, Ytest)
 
 batch_size = 64
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
 for Xbatch, Ybatch in train_loader:
@@ -161,6 +164,7 @@ bestLoss = float('inf')
 patience = 5
 wait=0
 trainLosses = []
+validLosses = []
 for epoch in range(numEpochs):
     model.train()
     trainLoss = 0.0
@@ -196,6 +200,7 @@ for epoch in range(numEpochs):
 # test
 model.eval()
 testLoss = 0.0
+valLoss = 0.0
 with torch.no_grad():
     for Xbatch, Ybatch in test_loader:
         Xbatch = Xbatch.to(device)
@@ -203,7 +208,7 @@ with torch.no_grad():
 
         Ypred = model(Xbatch)
         loss = criterion(Ypred, Ybatch)
-
+        valLoss += loss.item()*Xbatch.size(0)
         testLoss += loss.item()*Xbatch.size(0)
 
     testLoss /= len(test_loader.dataset)
