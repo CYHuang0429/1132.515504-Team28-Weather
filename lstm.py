@@ -60,24 +60,6 @@ weather[["AirTemperature", "DewPointTemperature", "Precipitation", "Precipitatio
 weather.dropna(inplace=True)
 weather["Precipitation"] = np.log1p(weather["Precipitation"])  # log1p轉換
 
-# === Add derived meteorological features ===
-# Temperature-Dew Point Spread
-weather["TempDewSpread"] = weather["AirTemperature"] - weather["DewPointTemperature"]
-
-# Approximate Lifting Condensation Level (LCL) in meters
-weather["LCL"] = (weather["TempDewSpread"]) / 0.008
-
-# Wind components
-weather["u_wind"] = -weather["WindSpeed"] * np.sin(np.radians(weather["WindDirection"]))
-weather["v_wind"] = -weather["WindSpeed"] * np.cos(np.radians(weather["WindDirection"]))
-
-# Pressure Tendency (ΔPressure)
-weather["PressureDelta"] = weather["SeaLevelPressure"].diff()
-
-# Drop NaNs from new columns
-weather.dropna(inplace=True)
-
-
 # 計算每個特徵的MSE
 # target = ["AirTemperature", "Precipitation", "WindSpeed"]
 target = ["Precipitation"]
@@ -98,14 +80,7 @@ result_df = pd.DataFrame(resultList)
 print(result_df)
 
 # 標準化
-# featureCols = ["AirTemperature", "DewPointTemperature", "PrecipitationDuration", "RelativeHumidity", "SeaLevelPressure", "StationPressure", "WindSpeed", "WindDirection"]
-featureCols = [
-    "AirTemperature", "DewPointTemperature", "PrecipitationDuration",
-    "RelativeHumidity", "SeaLevelPressure", "StationPressure", 
-    "WindSpeed", "WindDirection",
-    "TempDewSpread", "LCL", "u_wind", "v_wind", "PressureDelta"
-]
-
+featureCols = ["AirTemperature", "DewPointTemperature", "Precipitation", "PrecipitationDuration", "RelativeHumidity", "SeaLevelPressure", "StationPressure", "WindSpeed", "WindDirection"]
 
 featureScaler = StandardScaler()
 featureScaled = featureScaler.fit_transform(weather[featureCols])
@@ -184,7 +159,7 @@ criterion = nn.MSELoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
 #訓練
-numEpochs = 20
+numEpochs = 100
 bestLoss = float('inf')
 patience = 5
 wait=0
@@ -209,10 +184,28 @@ for epoch in range(numEpochs):
 
     print(f"Epoch [{epoch + 1}/{numEpochs}], Train Loss: {trainLoss:.4f}")
     trainLosses.append(trainLoss)
+
+    # validation
+    model.eval()
+    valLoss = 0.0
+    with torch.no_grad():
+        for Xbatch, Ybatch in val_loader:
+            Xbatch = Xbatch.to(device)
+            Ybatch = Ybatch.to(device)
+
+            Ypred = model(Xbatch)
+            loss = criterion(Ypred, Ybatch)
+            valLoss += loss.item() * Xbatch.size(0)
+
+    valLoss /= len(val_loader.dataset)
+    validLosses.append(valLoss)
+    print(f"Validation Loss: {valLoss:.4f}")
     # Early Stopping
-    if trainLoss < bestLoss:
-        bestLoss = trainLoss
+    if valLoss < bestLoss:
+        bestLoss = valLoss
         wait = 0
+        torch.save(model.state_dict(), "best_model.pt")  # 儲存最佳模型
+        print(f"Saved best model at epoch {epoch+1}")
     else:
         wait += 1
         if wait >= patience:
@@ -225,7 +218,6 @@ for epoch in range(numEpochs):
 # test
 model.eval()
 testLoss = 0.0
-valLoss = 0.0
 with torch.no_grad():
     for Xbatch, Ybatch in test_loader:
         Xbatch = Xbatch.to(device)
@@ -233,7 +225,7 @@ with torch.no_grad():
 
         Ypred = model(Xbatch)
         loss = criterion(Ypred, Ybatch)
-        valLoss += loss.item()*Xbatch.size(0)
+
         testLoss += loss.item()*Xbatch.size(0)
 
     testLoss /= len(test_loader.dataset)
@@ -263,9 +255,10 @@ for i, name in enumerate(["Precipitation"]):
 
 plt.figure(figsize=(10, 5))
 plt.plot(trainLosses, label='Train Loss')
+plt.plot(validLosses, label='Validation Loss')
 plt.xlabel("Epoch")
 plt.ylabel("Loss")
-plt.title("Training Loss Over Epochs")
+plt.title("Train vs Validation Loss Over Epochs")
 plt.grid(True)
 plt.legend()
 plt.tight_layout()
