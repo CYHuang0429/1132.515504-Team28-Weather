@@ -41,7 +41,7 @@ from sklearn.preprocessing import StandardScaler
 import warnings
 from torch.utils.data import DataLoader, Dataset
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, root_mean_squared_error
 warnings.filterwarnings('ignore')
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -59,7 +59,8 @@ weather[["AirTemperature", "Precipitation", "RelativeHumidity", "StationPressure
 weather.dropna(inplace=True)
 
 # 計算每個特徵的MSE
-target = ["AirTemperature", "Precipitation", "WindSpeed"]
+# target = ["AirTemperature", "Precipitation", "WindSpeed"]
+target = ["Precipitation"]
 resultList = []
 for col in target:
     temp_df = weather[[col]].copy(deep=True)
@@ -153,7 +154,7 @@ criterion = nn.MSELoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
 #訓練
-numEpochs = 20
+numEpochs = 100
 for epoch in range(numEpochs):
     model.train()
     trainLoss = 0.0
@@ -202,7 +203,7 @@ YtrueReal = targetScaler.inverse_transform(YtrueScaled)
 
 for i, name in enumerate(["AirTemperature", "Precipitation", "WindSpeed"]):
     mae = mean_absolute_error(YtrueReal[:, i], YpredReal[:, i])
-    rmse = mean_squared_error(YtrueReal[:, i], YpredReal[:, i], squared=False)
+    rmse = root_mean_squared_error(YtrueReal[:, i], YpredReal[:, i])
     r2 = r2_score(YtrueReal[:, i], YpredReal[:, i])
     print(f"{name} → MAE: {mae:.2f}, RMSE: {rmse:.2f}, R²: {r2:.4f}")
 
