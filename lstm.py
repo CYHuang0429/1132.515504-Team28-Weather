@@ -57,6 +57,7 @@ weather.set_index('Date', inplace=True)
 weather[["AirTemperature", "Precipitation", "RelativeHumidity", "StationPressure", "WindSpeed", "WindDirection"]] = weather[["AirTemperature", "Precipitation", "RelativeHumidity", "StationPressure", "WindSpeed", "WindDirection"]].apply(pd.to_numeric, errors='coerce')
 
 weather.dropna(inplace=True)
+weather["Precipitation"] = np.log1p(weather["Precipitation"])  # log1p轉換
 
 # 計算每個特徵的MSE
 # target = ["AirTemperature", "Precipitation", "WindSpeed"]
@@ -196,12 +197,14 @@ with torch.no_grad():
     YpredScaled = model(XtestTensor).cpu().numpy()  
 
 YtrueScaled = Ytest 
-
 YpredReal = targetScaler.inverse_transform(YpredScaled)
 YtrueReal = targetScaler.inverse_transform(YtrueScaled)
+# 對 Precipitation 還原 log1p 多目標的話要改
+YpredReal[:, 0] = np.expm1(YpredReal[:, 0])
+YtrueReal[:, 0] = np.expm1(YtrueReal[:, 0])
 
-
-for i, name in enumerate(["AirTemperature", "Precipitation", "WindSpeed"]):
+for i, name in enumerate(["Precipitation"]):
+#for i, name in enumerate(["AirTemperature", "Precipitation", "WindSpeed"]):
     mae = mean_absolute_error(YtrueReal[:, i], YpredReal[:, i])
     rmse = root_mean_squared_error(YtrueReal[:, i], YpredReal[:, i])
     r2 = r2_score(YtrueReal[:, i], YpredReal[:, i])
