@@ -4,7 +4,7 @@ from functools import reduce
 
 '''merge the data into desired format'''
 
-data_folder = './Data/EastHsinchu'
+data_folder = './Data/Hsinchu'
 feature_dfs = {} 
 
 for subfolder in os.listdir(data_folder):
@@ -42,11 +42,11 @@ merged_df = reduce(lambda left, right: pd.merge(left, right, on=["Month", "Date"
 # merged_df.drop(columns=["Date"], inplace=True)
 
 merged_df = merged_df.sort_values(by=["Month", "Date", "Hour"]).reset_index(drop=True)
-merged_df.to_csv("master_EastHsinchu.csv", index=False)
+merged_df.to_csv("master_Hsinchu.csv", index=False)
 
 '''split the final column'''
 
-file = pd.read_csv('master_EastHsinchu.csv')
+file = pd.read_csv('master_Hsinchu.csv')
 
 last_col = file.columns[-1]
 
@@ -58,6 +58,6 @@ file["WindDirection"] = split_data[1]
 file.drop(columns=[last_col], inplace=True)
 
 file['Date'] = pd.to_datetime(file['Month'] + '-' + file['Date'].astype(str).str.zfill(2))
-file.drop(columns=['Month'], inplace=False).to_csv('Masters/Master.csv', index=False)
+file.drop(columns=['Month'], inplace=False).to_csv('Masters/Master_Hsinchu.csv', index=False)
 
-file.to_csv('Masters/Master.csv', index=False)
+file.to_csv('Masters/Master_Hsinchu.csv', index=False)
