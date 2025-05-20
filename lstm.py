@@ -60,6 +60,24 @@ weather[["AirTemperature", "DewPointTemperature", "Precipitation", "Precipitatio
 weather.dropna(inplace=True)
 weather["Precipitation"] = np.log1p(weather["Precipitation"])  # log1p轉換
 
+# === Add derived meteorological features ===
+# Temperature-Dew Point Spread
+weather["TempDewSpread"] = weather["AirTemperature"] - weather["DewPointTemperature"]
+
+# Approximate Lifting Condensation Level (LCL) in meters
+weather["LCL"] = (weather["TempDewSpread"]) / 0.008
+
+# Wind components
+weather["u_wind"] = -weather["WindSpeed"] * np.sin(np.radians(weather["WindDirection"]))
+weather["v_wind"] = -weather["WindSpeed"] * np.cos(np.radians(weather["WindDirection"]))
+
+# Pressure Tendency (ΔPressure)
+weather["PressureDelta"] = weather["SeaLevelPressure"].diff()
+
+# Drop NaNs from new columns
+weather.dropna(inplace=True)
+
+
 # 計算每個特徵的MSE
 # target = ["AirTemperature", "Precipitation", "WindSpeed"]
 target = ["Precipitation"]
@@ -80,7 +98,14 @@ result_df = pd.DataFrame(resultList)
 print(result_df)
 
 # 標準化
-featureCols = ["AirTemperature", "DewPointTemperature", "Precipitation", "PrecipitationDuration", "RelativeHumidity", "SeaLevelPressure", "StationPressure", "WindSpeed", "WindDirection"]
+# featureCols = ["AirTemperature", "DewPointTemperature", "PrecipitationDuration", "RelativeHumidity", "SeaLevelPressure", "StationPressure", "WindSpeed", "WindDirection"]
+featureCols = [
+    "AirTemperature", "DewPointTemperature", "PrecipitationDuration",
+    "RelativeHumidity", "SeaLevelPressure", "StationPressure", 
+    "WindSpeed", "WindDirection",
+    "TempDewSpread", "LCL", "u_wind", "v_wind", "PressureDelta"
+]
+
 
 featureScaler = StandardScaler()
 featureScaled = featureScaler.fit_transform(weather[featureCols])
@@ -156,7 +181,7 @@ criterion = nn.MSELoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
 #訓練
-numEpochs = 100
+numEpochs = 20
 bestLoss = float('inf')
 patience = 5
 wait=0
