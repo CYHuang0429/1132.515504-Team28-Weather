@@ -47,14 +47,15 @@ warnings.filterwarnings('ignore')
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using \"{device}\" to train the model.")
 
-weather = pd.read_csv("Masters/Master.csv")
-weather = weather[["Month", "Date", "Hour", "AirTemperature", "Precipitation", "RelativeHumidity", "StationPressure", "WindSpeed", "WindDirection"]]
+weather = pd.read_csv("Masters/Master_Hsinchu.csv")
+# weather = weather[["Month", "Date", "Hour", "AirTemperature", "Precipitation", "RelativeHumidity", "StationPressure", "WindSpeed", "WindDirection"]]
+weather = weather[["Month", "Date", "Hour", "AirTemperature", "DewPointTemperature", "Precipitation", "PrecipitationDuration", "RelativeHumidity", "SeaLevelPressure", "StationPressure", "WindSpeed", "WindDirection"]]
 
 #weather = weather.rename(columns={'temp': 'AirTemperature', 'datetime': 'Date'})
 weather['Date'] = pd.to_datetime(weather['Date'])
 weather.set_index('Date', inplace=True)
 # print(weather.head(5))
-weather[["AirTemperature", "Precipitation", "RelativeHumidity", "StationPressure", "WindSpeed", "WindDirection"]] = weather[["AirTemperature", "Precipitation", "RelativeHumidity", "StationPressure", "WindSpeed", "WindDirection"]].apply(pd.to_numeric, errors='coerce')
+weather[["AirTemperature", "DewPointTemperature", "Precipitation", "PrecipitationDuration", "RelativeHumidity", "SeaLevelPressure", "StationPressure", "WindSpeed", "WindDirection"]] = weather[["AirTemperature", "DewPointTemperature", "Precipitation", "PrecipitationDuration", "RelativeHumidity", "SeaLevelPressure", "StationPressure", "WindSpeed", "WindDirection"]].apply(pd.to_numeric, errors='coerce')
 
 weather.dropna(inplace=True)
 weather["Precipitation"] = np.log1p(weather["Precipitation"])  # log1p轉換
@@ -79,7 +80,7 @@ result_df = pd.DataFrame(resultList)
 print(result_df)
 
 # 標準化
-featureCols = ["AirTemperature", "Precipitation", "RelativeHumidity", "StationPressure", "WindSpeed", "WindDirection"]
+featureCols = ["AirTemperature", "DewPointTemperature", "Precipitation", "PrecipitationDuration", "RelativeHumidity", "SeaLevelPressure", "StationPressure", "WindSpeed", "WindDirection"]
 
 featureScaler = StandardScaler()
 featureScaled = featureScaler.fit_transform(weather[featureCols])
