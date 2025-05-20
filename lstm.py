@@ -201,7 +201,8 @@ YpredReal = targetScaler.inverse_transform(YpredScaled)
 YtrueReal = targetScaler.inverse_transform(YtrueScaled)
 
 
-for i, name in enumerate(["AirTemperature", "Precipitation", "WindSpeed"]):
+# for i, name in enumerate(["AirTemperature", "Precipitation", "WindSpeed"]):
+for i, name in enumerate(["Precipitation"]):
     mae = mean_absolute_error(YtrueReal[:, i], YpredReal[:, i])
     rmse = root_mean_squared_error(YtrueReal[:, i], YpredReal[:, i])
     r2 = r2_score(YtrueReal[:, i], YpredReal[:, i])
