@@ -1,113 +1,196 @@
-import pandas as pd
-import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset, random_split
-from sklearn.preprocessing import MinMaxScaler
-import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from sklearn.preprocessing import StandardScaler
+from torch.utils.data import Dataset, DataLoader
+from sklearn.metrics import (
+    accuracy_score,
+    mean_absolute_error,
+    mean_squared_error,
+    r2_score
+)
 
-# === CONFIGURATION ===
-CSV_PATH = "merged_date_EastHsinchu.csv"
-TARGET_COL = "Precipitation"
-SEQ_LENGTH = 24
-BATCH_SIZE = 64
-EPOCHS = 30
-LR = 0.001
-TEST_SPLIT = 0.2
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# 1) Settings & Device
+window_size = 24
+hidden_size = 64
+batch_size = 64
+epochs_cls = 20
+epochs_reg = 50
+lr = 1e-3
 
-# === 1. LOAD DATA ===
-df = pd.read_csv(CSV_PATH)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using {device} for training")
 
-# Ensure 'rainfall' is numeric and handle missing values
-df = df.select_dtypes(include=[np.number]).dropna()
+# 2) Load & Preprocess
+df = pd.read_csv("Masters/Master_Hsinchu.csv", parse_dates=["Date"])
+df.set_index("Date", inplace=True)
 
-# === 2. NORMALIZATION ===
-scaler = MinMaxScaler()
-scaled_data = scaler.fit_transform(df)
+num_cols = [
+    "AirTemperature","DewPointTemperature","Precipitation",
+    "PrecipitationDuration","RelativeHumidity",
+    "SeaLevelPressure","StationPressure","WindSpeed","WindDirection"
+]
+df[num_cols] = df[num_cols].apply(pd.to_numeric, errors="coerce")
+df.dropna(inplace=True)
 
-# === 3. SEQUENCE GENERATION ===
-def create_sequences(data, target_idx, seq_length):
-    xs, ys = [], []
-    for i in range(len(data) - seq_length):
-        x = data[i:i+seq_length]
-        y = data[i+seq_length, target_idx]
-        xs.append(x)
-        ys.append(y)
-    return np.array(xs), np.array(ys)
+# Derived features
+df["TempDewSpread"] = df["AirTemperature"] - df["DewPointTemperature"]
+df["LCL"]           = df["TempDewSpread"] / 0.008
+df["u_wind"]        = -df["WindSpeed"] * np.sin(np.radians(df["WindDirection"]))
+df["v_wind"]        = -df["WindSpeed"] * np.cos(np.radians(df["WindDirection"]))
+df["PressureDelta"] = df["SeaLevelPressure"].diff()
+df.dropna(inplace=True)
 
-target_idx = df.columns.get_loc(TARGET_COL)
-X, y = create_sequences(scaled_data, target_idx, SEQ_LENGTH)
+# Raw & log-precip
+prec_orig = df["Precipitation"].values
+prec_log  = np.log1p(prec_orig)
 
-X_tensor = torch.tensor(X, dtype=torch.float32)
-y_tensor = torch.tensor(y, dtype=torch.float32).unsqueeze(1)
+# 3) Build sliding windows + labels
+features = [
+    "AirTemperature","DewPointTemperature","PrecipitationDuration",
+    "RelativeHumidity","SeaLevelPressure","StationPressure",
+    "WindSpeed","WindDirection","TempDewSpread","LCL",
+    "u_wind","v_wind","PressureDelta"
+]
 
-dataset = TensorDataset(X_tensor, y_tensor)
-test_size = int(TEST_SPLIT * len(dataset))
-train_size = len(dataset) - test_size
-train_ds, test_ds = random_split(dataset, [train_size, test_size])
+X, y_cls, y_reg = [], [], []
+for i in range(len(df) - window_size):
+    seq = df[features].iloc[i : i + window_size].values
+    X.append(seq)
+    target_p = prec_orig[i + window_size]
+    y_cls.append(1 if target_p > 0 else 0)
+    y_reg.append(prec_log[i + window_size])
 
-train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True)
-test_loader = DataLoader(test_ds, batch_size=BATCH_SIZE)
+X      = np.array(X)         # (N, window_size, F)
+y_cls  = np.array(y_cls)     # (N,)
+y_reg  = np.array(y_reg)     # (N,)
 
-# === 4. DEFINE MODEL ===
-class LSTMModel(nn.Module):
-    def __init__(self, input_size, hidden_size=64, num_layers=2):
+# 4) Scaling
+N, W, F = X.shape
+X_flat = X.reshape(-1, F)
+feat_scaler   = StandardScaler()
+X_scaled_flat = feat_scaler.fit_transform(X_flat)
+X_scaled      = X_scaled_flat.reshape(N, W, F)
+
+reg_scaler = StandardScaler()
+y_reg_scaled = reg_scaler.fit_transform(y_reg.reshape(-1, 1)).flatten()
+
+# 5) Train/Test split (time‑series)
+split = int(0.8 * N)
+X_tr, X_te = X_scaled[:split], X_scaled[split:]
+ycls_tr, ycls_te = y_cls[:split], y_cls[split:]
+yreg_tr, yreg_te = y_reg_scaled[:split], y_reg_scaled[split:]
+
+# 6) Dataset & DataLoader
+class SeqDataset(Dataset):
+    def __init__(self, X, yc, yr):
+        self.X, self.yc, self.yr = map(
+            lambda arr: torch.tensor(arr, dtype=torch.float32),
+            (X, yc.reshape(-1,1), yr.reshape(-1,1))
+        )
+    def __len__(self): return len(self.X)
+    def __getitem__(self, i): return self.X[i], self.yc[i], self.yr[i]
+
+train_ds = SeqDataset(X_tr, ycls_tr, yreg_tr)
+test_ds  = SeqDataset(X_te, ycls_te, yreg_te)
+train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+
+# 7) Model Definition
+class LSTMPredictor(nn.Module):
+    def __init__(self, in_size, hid_size, out_size):
         super().__init__()
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
-        self.fc = nn.Linear(hidden_size, 1)
-
+        self.lstm = nn.LSTM(
+            in_size, hid_size, num_layers=2,
+            batch_first=True, dropout=0.2
+        )
+        self.fc = nn.Linear(hid_size, out_size)
     def forward(self, x):
         out, _ = self.lstm(x)
-        out = out[:, -1, :]  # use the last time step
-        out = self.fc(out)
-        return out
+        return self.fc(out[:, -1, :])
 
-input_size = X.shape[2]
-model = LSTMModel(input_size).to(DEVICE)
-criterion = nn.MSELoss()
-optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+clf = LSTMPredictor(F, hidden_size, 1).to(device)
+reg = LSTMPredictor(F, hidden_size, 1).to(device)
 
-# === 5. TRAIN MODEL ===
-for epoch in range(EPOCHS):
-    model.train()
-    epoch_loss = 0
-    for xb, yb in train_loader:
-        xb, yb = xb.to(DEVICE), yb.to(DEVICE)
-        optimizer.zero_grad()
-        output = model(xb)
-        loss = criterion(output, yb)
+# 8) Losses & Optimizers
+# Weighted BCE for classification
+pos = (ycls_tr == 1).sum()
+neg = (ycls_tr == 0).sum()
+pos_weight = torch.tensor([neg/pos], device=device)
+criterion_cls = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+opt_cls = torch.optim.Adam(clf.parameters(), lr=lr)
+
+# Smooth L1 for regression
+criterion_reg = nn.SmoothL1Loss()
+opt_reg       = torch.optim.Adam(reg.parameters(), lr=lr)
+
+# 9) Training Stage 1: Classifier
+for ep in range(epochs_cls):
+    clf.train()
+    running_loss = 0.0
+    for Xb, yb_c, _ in train_loader:
+        Xb, yb_c = Xb.to(device), yb_c.to(device)
+        opt_cls.zero_grad()
+        logits = clf(Xb)
+        loss = criterion_cls(logits, yb_c)
         loss.backward()
-        optimizer.step()
-        epoch_loss += loss.item()
-    print(f"Epoch {epoch+1}/{EPOCHS}, Loss: {epoch_loss/len(train_loader):.4f}")
+        opt_cls.step()
+        running_loss += loss.item() * Xb.size(0)
+    print(f"[CLS] Epoch {ep+1}/{epochs_cls}, Loss: {running_loss/len(train_ds):.4f}")
 
-# === 6. EVALUATE ===
-model.eval()
-predictions, actuals = [], []
+# 10) Training Stage 2: Regressor (rain-only)
+mask = ycls_tr == 1
+X_rain = X_tr[mask]; y_rain = yreg_tr[mask]
+rain_ds = SeqDataset(X_rain, np.ones(len(y_rain)), y_rain)
+rain_loader = DataLoader(rain_ds, batch_size=batch_size, shuffle=True)
+
+for ep in range(epochs_reg):
+    reg.train()
+    running_loss = 0.0
+    for Xb, _, yb_r in rain_loader:
+        Xb, yb_r = Xb.to(device), yb_r.to(device)
+        opt_reg.zero_grad()
+        preds = reg(Xb)
+        loss = criterion_reg(preds, yb_r)
+        loss.backward()
+        opt_reg.step()
+        running_loss += loss.item() * Xb.size(0)
+    print(f"[REG] Epoch {ep+1}/{epochs_reg}, Loss: {running_loss/len(rain_ds):.4f}")
+
+# 11) Evaluation on Test Set
+clf.eval(); reg.eval()
+all_logits, all_true_c = [], []
+all_preds_r, all_true_r = [], []
+
 with torch.no_grad():
-    for xb, yb in test_loader:
-        xb = xb.to(DEVICE)
-        preds = model(xb).cpu().numpy()
-        predictions.append(preds)
-        actuals.append(yb.numpy())
+    for Xb, yb_c, yb_r in DataLoader(test_ds, batch_size=batch_size):
+        Xb = Xb.to(device)
+        lg = clf(Xb).cpu().numpy().flatten()
+        all_logits.extend(lg)
+        all_true_c.extend(yb_c.numpy().flatten())
+        # Only regress where classifier predicts rain
+        mask = lg > 0
+        if mask.any():
+            pr = reg(Xb).cpu().numpy().flatten()[mask]
+            gt = yb_r.numpy().flatten()[mask]
+            all_preds_r.extend(pr); all_true_r.extend(gt)
 
-predictions = np.vstack(predictions)
-actuals = np.vstack(actuals)
+# Inverse‑scale & expm1
+all_preds_r = reg_scaler.inverse_transform(
+    np.array(all_preds_r).reshape(-1,1)
+).flatten()
+all_preds_r = np.expm1(all_preds_r)
 
-# Inverse transform to original scale
-target_scaler = MinMaxScaler()
-target_scaler.min_, target_scaler.scale_ = scaler.min_[target_idx], scaler.scale_[target_idx]
-pred_inv = target_scaler.inverse_transform(predictions)
-act_inv = target_scaler.inverse_transform(actuals)
+all_true_r = reg_scaler.inverse_transform(
+    np.array(all_true_r).reshape(-1,1)
+).flatten()
+all_true_r = np.expm1(all_true_r)
 
-# === 7. PLOT RESULTS ===
-plt.figure(figsize=(10, 4))
-plt.plot(act_inv, label="Actual Rainfall")
-plt.plot(pred_inv, label="Predicted Rainfall")
-plt.legend()
-plt.title("Rainfall Prediction (One Step Ahead)")
-plt.xlabel("Sample")
-plt.ylabel("Rainfall")
-plt.tight_layout()
-plt.show()
+# Metrics
+acc  = accuracy_score(all_true_c, np.array(all_logits)>0)
+mae  = mean_absolute_error(all_true_r, all_preds_r)
+rmse = mean_squared_error(all_true_r, all_preds_r, squared=False)
+r2   = r2_score(all_true_r, all_preds_r)
+
+print(f"\nTest Class Accuracy: {acc:.3f}")
+print(f"Test Rain MAE: {mae:.3f}, RMSE: {rmse:.3f}, R²: {r2:.3f}")
