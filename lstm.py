@@ -133,7 +133,7 @@ for Xbatch, Ybatch in train_loader:
 class LSTM(nn.Module):
     def __init__(self, inputSize, hiddenSize, outputSize):
         super(LSTM, self).__init__()
-        self.lstm = nn.LSTM(inputSize, hiddenSize, batch_first=True)
+        self.lstm = nn.LSTM(inputSize, hiddenSize, num_layers=2, batch_first=True,dropout=0.2)
         self.linear = nn.Linear(hiddenSize, outputSize)
 
     def forward(self, x):
@@ -155,7 +155,11 @@ criterion = nn.MSELoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
 #訓練
-numEpochs = 2
+numEpochs = 100
+bestLoss = float('inf')
+patience = 5
+wait=0
+trainLosses = []
 for epoch in range(numEpochs):
     model.train()
     trainLoss = 0.0
@@ -174,6 +178,20 @@ for epoch in range(numEpochs):
     trainLoss /= len(train_loader.dataset)
 
     print(f"Epoch [{epoch + 1}/{numEpochs}], Train Loss: {trainLoss:.4f}")
+    trainLosses.append(trainLoss)
+    # Early Stopping
+    if trainLoss < bestLoss:
+        bestLoss = trainLoss
+        wait = 0
+    else:
+        wait += 1
+        if wait >= patience:
+            print("Early stopping")
+            break
+
+
+
+
 # test
 model.eval()
 testLoss = 0.0
@@ -207,9 +225,20 @@ YtrueReal[:, 0] = np.expm1(YtrueReal[:, 0])
 # for i, name in enumerate(["AirTemperature", "Precipitation", "WindSpeed"]):
 for i, name in enumerate(["Precipitation"]):
     mae = mean_absolute_error(YtrueReal[:, i], YpredReal[:, i])
-    rmse = mean_squared_error(YtrueReal[:, i], YpredReal[:, i])
+    rmse = root_mean_squared_error(YtrueReal[:, i], YpredReal[:, i])
     r2 = r2_score(YtrueReal[:, i], YpredReal[:, i])
     print(f"{name} → MAE: {mae:.2f}, RMSE: {rmse:.2f}, R²: {r2:.4f}")
+
+
+plt.figure(figsize=(10, 5))
+plt.plot(trainLosses, label='Train Loss')
+plt.xlabel("Epoch")
+plt.ylabel("Loss")
+plt.title("Training Loss Over Epochs")
+plt.grid(True)
+plt.legend()
+plt.tight_layout()
+plt.show()
 
 
 '''
