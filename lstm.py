@@ -207,8 +207,14 @@ YtrueReal = targetScaler.inverse_transform(YtrueScaled)
 YpredReal[:, 0] = np.expm1(YpredReal[:, 0])
 YtrueReal[:, 0] = np.expm1(YtrueReal[:, 0])
 
+<<<<<<< HEAD
 for i, name in enumerate(["Precipitation"]):
 #for i, name in enumerate(["AirTemperature", "Precipitation", "WindSpeed"]):
+=======
+
+# for i, name in enumerate(["AirTemperature", "Precipitation", "WindSpeed"]):
+for i, name in enumerate(["Precipitation"]):
+>>>>>>> 35fe5f247f6622c587ded627dbe4173df01166da
     mae = mean_absolute_error(YtrueReal[:, i], YpredReal[:, i])
 <<<<<<< Updated upstream
     rmse = root_mean_squared_error(YtrueReal[:, i], YpredReal[:, i])
