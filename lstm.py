@@ -280,7 +280,7 @@ classification_model.eval()
 with torch.no_grad():
     Xtest_tensor = torch.tensor(Xtest, dtype=torch.float32).to(device)
     rain_probs = classification_model(Xtest_tensor).cpu().numpy().squeeze()
-    rain_preds = (rain_probs >= 0.5).astype(int)
+    rain_preds = (rain_probs >= 0.3).astype(int)
 
 # 評估模型分類性能
 print("=== Classification Report ===")
