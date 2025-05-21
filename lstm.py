@@ -27,9 +27,20 @@ weather.set_index('Date', inplace=True)
 # print(weather.head(5))
 weather[["AirTemperature", "DewPointTemperature", "Precipitation", "PrecipitationDuration", "RelativeHumidity", "SeaLevelPressure", "StationPressure", "WindSpeed", "WindDirection"]] = weather[["AirTemperature", "DewPointTemperature", "Precipitation", "PrecipitationDuration", "RelativeHumidity", "SeaLevelPressure", "StationPressure", "WindSpeed", "WindDirection"]].apply(pd.to_numeric, errors='coerce')
 
-weather.dropna(inplace=True)
 weather["Precipitation"] = np.log1p(weather["Precipitation"])  # log1p轉換
 weather["RainBinary"] = (weather["Precipitation"] > 0).astype(int)  # 二元化降雨量
+# 基本特徵
+weather["Temp_DewDiff"] = weather["AirTemperature"] - weather["DewPointTemperature"]
+weather["Delta_StationPressure"] = weather["StationPressure"] - weather["StationPressure"].shift(1)
+weather["HighHumidity"] = (weather["RelativeHumidity"] >= 90).astype(int)
+weather["RainBinary_t-1"] = weather["RainBinary"].shift(1)
+weather["IsRainingContinuously"] = ((weather["RainBinary"] == 1) & (weather["RainBinary_t-1"] == 1)).astype(int)
+# 延遲特徵（可根據需求加更多 lag）
+for col in ["Precipitation", "RelativeHumidity", "WindSpeed", "Temp_DewDiff"]:
+    weather[f"{col}_t-1"] = weather[col].shift(1)
+
+# 處理缺失值
+weather = weather.dropna().reset_index(drop=True)
 
 # 計算每個特徵的MSE
 # target = ["AirTemperature", "Precipitation", "WindSpeed"]
@@ -52,7 +63,14 @@ result_df = pd.DataFrame(resultList)
 print(result_df)
 
 # 標準化
-featureCols = ["AirTemperature", "DewPointTemperature", "Precipitation", "PrecipitationDuration", "RelativeHumidity", "SeaLevelPressure", "StationPressure", "WindSpeed", "WindDirection"]
+featureCols = [
+    "AirTemperature", "DewPointTemperature", "Precipitation", "PrecipitationDuration",
+    "RelativeHumidity", "SeaLevelPressure", "StationPressure", "WindSpeed", "WindDirection",
+    "Temp_DewDiff", "Delta_StationPressure", "HighHumidity",
+    "Precipitation_t-1", "RelativeHumidity_t-1",
+    "WindSpeed_t-1", "Temp_DewDiff_t-1", "RainBinary",
+    "RainBinary_t-1", "IsRainingContinuously"
+]
 
 featureScaler = StandardScaler()
 featureScaled = featureScaler.fit_transform(weather[featureCols])
