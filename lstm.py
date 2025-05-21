@@ -313,6 +313,18 @@ rmse = np.sqrt(mean_squared_error(Y_rain_true_real[:, 0], Y_rain_pred_real[:, 0]
 r2 = r2_score(Y_rain_true_real[:, 0], Y_rain_pred_real[:, 0])
 print(f"Precipitation on Rainy Hours → MAE: {mae:.2f}, RMSE: {rmse:.2f}, R²: {r2:.4f}")
 
+# 畫圖：預測 vs 真實的降雨量（只針對預測為下雨的樣本）
+plt.figure(figsize=(10, 5))
+plt.plot(Y_rain_true_real[:, 0], label='True Rainfall', marker='o')
+plt.plot(Y_rain_pred_real[:, 0], label='Predicted Rainfall', marker='x')
+plt.xlabel("Sample Index")
+plt.ylabel("Precipitation (mm)")
+plt.title("Predicted vs Actual Rainfall on Rainy Hours")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
 
 plt.figure(figsize=(12, 4))
 plt.plot(rain_probs[:200], label="Predicted Probability")
