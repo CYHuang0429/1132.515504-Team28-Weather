@@ -9,7 +9,7 @@ from sklearn.preprocessing import StandardScaler
 import warnings
 from torch.utils.data import DataLoader, Dataset
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, root_mean_squared_error
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, root_mean_squared_error, classification_report, confusion_matrix
 from imblearn.over_sampling import RandomOverSampler
 
 warnings.filterwarnings('ignore')
@@ -281,6 +281,11 @@ with torch.no_grad():
     Xtest_tensor = torch.tensor(Xtest, dtype=torch.float32).to(device)
     rain_probs = classification_model(Xtest_tensor).cpu().numpy().squeeze()
     rain_preds = (rain_probs >= 0.5).astype(int)
+
+# 評估模型分類性能
+print("=== Classification Report ===")
+print(classification_report(Yctest.flatten(), rain_preds, target_names=["No Rain", "Rain"]))
+
 # test
 rain_indices = np.where(rain_preds == 1)[0]
 
@@ -315,6 +320,16 @@ plt.plot(Yctest[:200], label="Actual RainBinary")
 plt.legend()
 plt.title("Rain Prediction vs Actual")
 plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+cm = confusion_matrix(Yctest.flatten(), rain_preds)
+
+plt.figure(figsize=(5,4))
+sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=["No Rain", "Rain"], yticklabels=["No Rain", "Rain"])
+plt.xlabel("Predicted")
+plt.ylabel("Actual")
+plt.title("Confusion Matrix")
 plt.tight_layout()
 plt.show()
 
