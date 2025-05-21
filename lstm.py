@@ -208,13 +208,69 @@ for epoch in range(numEpochs):
     if valLoss < bestLoss:
         bestLoss = valLoss
         wait = 0
-        torch.save(model.state_dict(), "best_model.pt")  # 儲存最佳模型
+        torch.save(classification_model.state_dict(), "./best_classifier.pt")  # 儲存最佳模型
         print(f"Saved best model at epoch {epoch+1}")
     else:
         wait += 1
         if wait >= patience:
             print("Early stopping")
             break
+
+
+# ========== Training Regression Model ==========
+numEpochs = 100
+bestLoss_reg = float('inf')
+wait = 0
+patience = 5
+trainLosses_reg = []
+validLosses_reg = []
+
+for epoch in range(numEpochs):
+    model.train()
+    trainLoss = 0.0
+    for Xbatch, Ybatch in train_loader_reg:
+        Xbatch = Xbatch.to(device)
+        Ybatch = Ybatch.float().to(device)
+
+        optimizer.zero_grad()
+        Ypred = model(Xbatch)
+        loss = criterion(Ypred, Ybatch)
+        loss.backward()
+        optimizer.step()
+
+        trainLoss += loss.item() * Xbatch.size(0)
+
+    trainLoss /= len(train_loader_reg.dataset)
+    trainLosses_reg.append(trainLoss)
+
+    # Validation
+    model.eval()
+    valLoss = 0.0
+    with torch.no_grad():
+        for Xbatch, Ybatch in val_loader_reg:
+            Xbatch = Xbatch.to(device)
+            Ybatch = Ybatch.float().to(device)
+
+            Ypred = model(Xbatch)
+            loss = criterion(Ypred, Ybatch)
+            valLoss += loss.item() * Xbatch.size(0)
+
+    valLoss /= len(val_loader_reg.dataset)
+    validLosses_reg.append(valLoss)
+
+    print(f"[Epoch {epoch+1}] Regressor Train Loss: {trainLoss:.4f}, Val Loss: {valLoss:.4f}")
+    
+    if valLoss < bestLoss_reg:
+        bestLoss_reg = valLoss
+        wait = 0
+        torch.save(model.state_dict(), "./best_model.pt")
+        print(f"✅ Saved best regression model at epoch {epoch+1}")
+    else:
+        wait += 1
+        if wait >= patience:
+            print("🛑 Early stopping regression training")
+            break
+
 
 classification_model.load_state_dict(torch.load("best_classifier.pt"))
 classification_model.eval()
@@ -230,8 +286,8 @@ X_rain = Xtest[rain_indices]
 Y_rain_true = Ytest[rain_indices]
 
 # 測試模型載入
-model.load_state_dict(torch.load("best_model.pt"))
-model.eval()
+classification_model.load_state_dict(torch.load("best_classifier.pt"))
+classification_model.eval()
 with torch.no_grad():
     X_rain_tensor = torch.tensor(X_rain, dtype=torch.float32).to(device)
     Y_rain_pred_scaled = model(X_rain_tensor).cpu().numpy()
