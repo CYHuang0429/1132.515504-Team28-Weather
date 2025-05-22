@@ -35,6 +35,10 @@ weather["Delta_StationPressure"] = weather["StationPressure"] - weather["Station
 weather["HighHumidity"] = (weather["RelativeHumidity"] >= 90).astype(int)
 weather["RainBinary_t-1"] = weather["RainBinary"].shift(1)
 weather["IsRainingContinuously"] = ((weather["RainBinary"] == 1) & (weather["RainBinary_t-1"] == 1)).astype(int)
+weather["RH_roll3"] = weather["RelativeHumidity"].rolling(3).mean()
+weather["Precipitation_t-2"] = weather["Precipitation"].shift(2)
+weather["Pressure_drop3h"] = weather["StationPressure"] - weather["StationPressure"].shift(3)
+
 # 延遲特徵（可根據需求加更多 lag）
 for col in ["Precipitation", "RelativeHumidity", "WindSpeed", "Temp_DewDiff"]:
     weather[f"{col}_t-1"] = weather[col].shift(1)
@@ -69,7 +73,9 @@ featureCols = [
     "Temp_DewDiff", "Delta_StationPressure", "HighHumidity",
     "Precipitation_t-1", "RelativeHumidity_t-1",
     "WindSpeed_t-1", "Temp_DewDiff_t-1", "RainBinary",
-    "RainBinary_t-1", "IsRainingContinuously"
+    "RainBinary_t-1", "IsRainingContinuously",
+    "RH_roll3", "Precipitation_t-2", "Pressure_drop3h"
+    
 ]
 
 featureScaler = StandardScaler()
@@ -138,8 +144,8 @@ for Xbatch, Ybatch in train_loader:
 class LSTMClassifier(nn.Module):
     def __init__(self, inputSize, hiddenSize):
         super(LSTMClassifier, self).__init__()
-        self.lstm = nn.LSTM(inputSize, hiddenSize, num_layers=2, batch_first=True, dropout=0.2)
-        self.linear = nn.Linear(hiddenSize, 1)
+        self.lstm = nn.LSTM(inputSize, hiddenSize, num_layers=3, batch_first=True, dropout=0.3, bidirectional=True)
+        self.linear = nn.Linear(hiddenSize*2, 1)
         self.sigmoid = nn.Sigmoid()
     
     def forward(self, x):
@@ -156,8 +162,8 @@ class LSTMClassifier(nn.Module):
 class LSTM(nn.Module):
     def __init__(self, inputSize, hiddenSize, outputSize):
         super(LSTM, self).__init__()
-        self.lstm = nn.LSTM(inputSize, hiddenSize, num_layers=2, batch_first=True,dropout=0.2)
-        self.linear = nn.Linear(hiddenSize, outputSize)
+        self.lstm = nn.LSTM(inputSize, hiddenSize, num_layers=3, batch_first=True,dropout=0.3, bidirectional=True)
+        self.linear = nn.Linear(hiddenSize*2, outputSize)
 
     def forward(self, x):
         lstmOut, _ = self.lstm(x)
