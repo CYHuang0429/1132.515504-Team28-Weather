@@ -9,7 +9,7 @@ from sklearn.preprocessing import StandardScaler
 import warnings
 from torch.utils.data import DataLoader, Dataset
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, root_mean_squared_error, classification_report, confusion_matrix
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, root_mean_squared_error, classification_report, confusion_matrix, precision_recall_curve
 from imblearn.over_sampling import RandomOverSampler
 
 warnings.filterwarnings('ignore')
@@ -145,13 +145,17 @@ class LSTMClassifier(nn.Module):
     def __init__(self, inputSize, hiddenSize):
         super(LSTMClassifier, self).__init__()
         self.lstm = nn.LSTM(inputSize, hiddenSize, num_layers=3, batch_first=True, dropout=0.3, bidirectional=True)
+        self.attn = nn.MultiheadAttention(embed_dim=hiddenSize*2, num_heads=2, batch_first=True)
+
         self.linear = nn.Linear(hiddenSize*2, 1)
         self.sigmoid = nn.Sigmoid()
     
     def forward(self, x):
         lstmOut, _ = self.lstm(x)
-        out = self.linear(lstmOut[:, -1, :])
-        out = self.sigmoid(out)
+        # out = self.linear(lstmOut[:, -1, :])
+        attnOut, _ = self.attn(lstmOut, lstmOut, lstmOut)
+        out = self.linear(attnOut[:, -1, :])           # 用最後一個時間步
+        #out = self.sigmoid(out)
         return out
     
 
@@ -184,7 +188,9 @@ criterion = nn.MSELoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
 classification_model = LSTMClassifier(inputSize, hiddenSize).to(device)
-criterion_c = nn.BCELoss()
+# criterion_c = nn.BCELoss()
+pos_weight = torch.tensor([8.0], device=device)  # 加強 minority class (Rain) 權重
+criterion_c = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 optimizer_c = torch.optim.Adam(classification_model.parameters(), lr=0.001)
 
 #訓練
@@ -303,8 +309,25 @@ classification_model.eval()
 
 with torch.no_grad():
     Xtest_tensor = torch.tensor(Xtest, dtype=torch.float32).to(device)
-    rain_probs = classification_model(Xtest_tensor).cpu().numpy().squeeze()
+    logits = classification_model(Xtest_tensor)
+    rain_probs = torch.sigmoid(logits).cpu().numpy().squeeze()
     rain_preds = (rain_probs >= 0.3).astype(int)
+
+# 計算 precision-recall curve
+precisions, recalls, thresholds = precision_recall_curve(Yctest.flatten(), rain_probs)
+
+# 計算 F1 分數
+f1_scores = 2 * (precisions * recalls) / (precisions + recalls + 1e-6)
+best_idx = np.argmax(f1_scores)
+best_threshold = thresholds[best_idx]
+
+print(f"Best Threshold: {best_threshold:.2f}")
+print(f"Precision at Best Threshold: {precisions[best_idx]:.2f}")
+print(f"Recall at Best Threshold:    {recalls[best_idx]:.2f}")
+print(f"F1 Score at Best Threshold:  {f1_scores[best_idx]:.2f}")
+
+# 重新根據 best_threshold 產生預測
+rain_preds = (rain_probs >= best_threshold).astype(int)
 
 # 評估模型分類性能
 print("=== Classification Report ===")
