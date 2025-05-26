@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader, Dataset
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, root_mean_squared_error, classification_report, confusion_matrix, precision_recall_curve
 from imblearn.over_sampling import RandomOverSampler
+from Model import LSTM, LSTMClassifier, CNN_LSTM
 
 warnings.filterwarnings('ignore')
 
@@ -141,38 +142,9 @@ for Xbatch, Ybatch in train_loader:
     print("Y_batch shape:",Ybatch.shape)
     break
 
-class LSTMClassifier(nn.Module):
-    def __init__(self, inputSize, hiddenSize):
-        super(LSTMClassifier, self).__init__()
-        self.lstm = nn.LSTM(inputSize, hiddenSize, num_layers=3, batch_first=True, dropout=0.3, bidirectional=True)
-        self.attn = nn.MultiheadAttention(embed_dim=hiddenSize*2, num_heads=2, batch_first=True)
-
-        self.linear = nn.Linear(hiddenSize*2, 1)
-        self.sigmoid = nn.Sigmoid()
-    
-    def forward(self, x):
-        lstmOut, _ = self.lstm(x)
-        # out = self.linear(lstmOut[:, -1, :])
-        attnOut, _ = self.attn(lstmOut, lstmOut, lstmOut)
-        out = self.linear(attnOut[:, -1, :])           # 用最後一個時間步
-        #out = self.sigmoid(out)
-        return out
-    
 
 
-
-
-# LSTM
-class LSTM(nn.Module):
-    def __init__(self, inputSize, hiddenSize, outputSize):
-        super(LSTM, self).__init__()
-        self.lstm = nn.LSTM(inputSize, hiddenSize, num_layers=3, batch_first=True,dropout=0.3, bidirectional=True)
-        self.linear = nn.Linear(hiddenSize*2, outputSize)
-
-    def forward(self, x):
-        lstmOut, _ = self.lstm(x)
-        out = self.linear(lstmOut[:, -1, :])
-        return out
+# ============ Train Model =================
 
 inputSize = len(featureCols)
 hiddenSize = 64
@@ -187,13 +159,15 @@ criterion = nn.MSELoss()
 #優化器
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
-classification_model = LSTMClassifier(inputSize, hiddenSize).to(device)
+# classification_model = LSTMClassifier(inputSize, hiddenSize).to(device)
+classification_model = CNN_LSTM(inputSize,hiddenSize).to(device)
+
 # criterion_c = nn.BCELoss()
 pos_weight = torch.tensor([8.0], device=device)  # 加強 minority class (Rain) 權重
 criterion_c = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 optimizer_c = torch.optim.Adam(classification_model.parameters(), lr=0.001)
 
-#訓練
+#Training Classfication Model
 numEpochs = 100
 bestLoss = float('inf')
 patience = 5
