@@ -452,4 +452,19 @@ for i, var in enumerate(target):
     plt.tight_layout()
     plt.show()
 
+# 整理並輸出含「預測是否下雨」欄位的結果
+output_df = pd.DataFrame({
+    "True_AirTemperature": Y_rain_true_real[:, 0],
+    "Pred_AirTemperature": Y_rain_pred_real[:, 0],
+    "True_Precipitation": Y_rain_true_real[:, 1],
+    "Pred_Precipitation": Y_rain_pred_real[:, 1],
+    "True_WindSpeed": Y_rain_true_real[:, 2],
+    "Pred_WindSpeed": Y_rain_pred_real[:, 2],
+    "Pred_RainBinary": rain_preds[rain_indices],  # 新增的欄位
+})
+
+output_df.index.name = "SampleIndex"
+output_df.to_csv("RainyHour_Predictions.csv", index=True)
+print("✅ 預測結果（含預測是否下雨）已儲存至 RainyHour_Predictions.csv")
+
 #print(weather.info)
