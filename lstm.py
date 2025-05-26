@@ -70,11 +70,10 @@ print(result_df)
 featureCols = [
     "AirTemperature", "DewPointTemperature", "Precipitation", "PrecipitationDuration",
     "RelativeHumidity", "SeaLevelPressure", "StationPressure", "WindSpeed", "WindDirection",
-    "Temp_DewDiff", "Delta_StationPressure", "HighHumidity",
+    "Temp_DewDiff", "Delta_StationPressure", 
     "Precipitation_t-1", "RelativeHumidity_t-1",
     "WindSpeed_t-1", "Temp_DewDiff_t-1", "RainBinary",
-    "RainBinary_t-1", "IsRainingContinuously",
-    "RH_roll3", "Precipitation_t-2", "Pressure_drop3h"
+    
     
 ]
 
