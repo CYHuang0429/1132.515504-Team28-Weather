@@ -387,7 +387,7 @@ classification_model.eval()
 with torch.no_grad():
     X_rain_tensor = torch.tensor(X_rain, dtype=torch.float32).to(device)
     #Y_rain_pred_scaled = model(X_rain_tensor).cpu().numpy()
-    _, Y_rain_pred_scaled = model(X_rain_tensor)
+    Y_rain_pred_scaled, _ = model(X_rain_tensor)
     Y_rain_pred_scaled = Y_rain_pred_scaled.cpu().numpy()
 
 
