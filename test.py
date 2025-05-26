@@ -1,198 +1,173 @@
+import argparse
+import random
 import torch
 import torch.nn as nn
-import numpy as np
+import torch.multiprocessing as mp
 import pandas as pd
-from sklearn.preprocessing import StandardScaler
-from torch.utils.data import Dataset, DataLoader
-from sklearn.metrics import (
-    accuracy_score,
-    mean_absolute_error,
-    mean_squared_error,
-    r2_score
-)
-import warnings
-warnings.filterwarnings('ignore')
+import numpy as np
+from torch.optim import RMSprop
 
-# 1) Settings & Device
-window_size = 24
-hidden_size = 64
-batch_size = 64
-epochs_cls = 20
-epochs_reg = 50
-lr = 1e-3
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using {device} for training")
+class RainEnv:
+    def __init__(self, csv_path, window_size=5):
+        self.data = pd.read_csv(csv_path)
+        self.data = self.data.fillna(method='ffill')
+        self.window_size = window_size
+        self.cur = 0
+        self.max_index = len(self.data) - 1
 
-# 2) Load & Preprocess
-df = pd.read_csv("Masters/Master_Hsinchu.csv", parse_dates=["Date"])
-df.set_index("Date", inplace=True)
+    def reset(self):
+        self.cur = random.randint(0, self.max_index - self.window_size - 1)
+        return self._get_obs()
 
-num_cols = [
-    "AirTemperature","DewPointTemperature","Precipitation",
-    "PrecipitationDuration","RelativeHumidity",
-    "SeaLevelPressure","StationPressure","WindSpeed","WindDirection"
-]
-df[num_cols] = df[num_cols].apply(pd.to_numeric, errors="coerce")
-df.dropna(inplace=True)
+    def step(self, action=None):
+        self.cur += 1
+        done = self.cur + self.window_size >= self.max_index
+        obs = self._get_obs()
+        reward = self.data.iloc[self.cur + self.window_size]["Precipitation"]
+        return obs, reward, done, {}
 
-# Derived features
-df["TempDewSpread"] = df["AirTemperature"] - df["DewPointTemperature"]
-df["LCL"]           = df["TempDewSpread"] / 0.008
-df["u_wind"]        = -df["WindSpeed"] * np.sin(np.radians(df["WindDirection"]))
-df["v_wind"]        = -df["WindSpeed"] * np.cos(np.radians(df["WindDirection"]))
-df["PressureDelta"] = df["SeaLevelPressure"].diff()
-df.dropna(inplace=True)
+    def _get_obs(self):
+        obs = self.data.iloc[self.cur:self.cur + self.window_size]
+        return obs.drop(columns=["Precipitation"]).values.flatten()
 
-# Raw & log-precip
-prec_orig = df["Precipitation"].values
-prec_log  = np.log1p(prec_orig)
 
-# 3) Build sliding windows + labels
-features = [
-    "AirTemperature","DewPointTemperature","PrecipitationDuration",
-    "RelativeHumidity","SeaLevelPressure","StationPressure",
-    "WindSpeed","WindDirection","TempDewSpread","LCL",
-    "u_wind","v_wind","PressureDelta"
-]
-
-X, y_cls, y_reg = [], [], []
-for i in range(len(df) - window_size):
-    seq = df[features].iloc[i : i + window_size].values
-    X.append(seq)
-    target_p = prec_orig[i + window_size]
-    y_cls.append(1 if target_p > 0 else 0)
-    y_reg.append(prec_log[i + window_size])
-
-X      = np.array(X)         # (N, window_size, F)
-y_cls  = np.array(y_cls)     # (N,)
-y_reg  = np.array(y_reg)     # (N,)
-
-# 4) Scaling
-N, W, F = X.shape
-X_flat = X.reshape(-1, F)
-feat_scaler   = StandardScaler()
-X_scaled_flat = feat_scaler.fit_transform(X_flat)
-X_scaled      = X_scaled_flat.reshape(N, W, F)
-
-reg_scaler = StandardScaler()
-y_reg_scaled = reg_scaler.fit_transform(y_reg.reshape(-1, 1)).flatten()
-
-# 5) Train/Test split (time‑series)
-split = int(0.8 * N)
-X_tr, X_te = X_scaled[:split], X_scaled[split:]
-ycls_tr, ycls_te = y_cls[:split], y_cls[split:]
-yreg_tr, yreg_te = y_reg_scaled[:split], y_reg_scaled[split:]
-
-# 6) Dataset & DataLoader
-class SeqDataset(Dataset):
-    def __init__(self, X, yc, yr):
-        self.X, self.yc, self.yr = map(
-            lambda arr: torch.tensor(arr, dtype=torch.float32),
-            (X, yc.reshape(-1,1), yr.reshape(-1,1))
+class VPNNetwork(nn.Module):
+    def __init__(self, input_dim, option_dim):
+        super(VPNNetwork, self).__init__()
+        self.encoder = nn.Sequential(
+            nn.Linear(input_dim + option_dim, 64),
+            nn.ReLU(),
         )
-    def __len__(self): return len(self.X)
-    def __getitem__(self, i): return self.X[i], self.yc[i], self.yr[i]
+        self.reward_head = nn.Linear(64, 1)
+        self.discount_head = nn.Linear(64, 1)
+        self.value_head = nn.Linear(64, 1)
+        self.transition_head = nn.Linear(64, input_dim)
 
-train_ds = SeqDataset(X_tr, ycls_tr, yreg_tr)
-test_ds  = SeqDataset(X_te, ycls_te, yreg_te)
-train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+    def forward(self, state, option):
+        x = torch.cat([state, option], dim=-1)
+        x = self.encoder(x)
+        reward = self.reward_head(x)
+        discount = torch.sigmoid(self.discount_head(x))
+        value = self.value_head(x)
+        next_state = self.transition_head(x)
+        return reward, discount, value, next_state
 
-# 7) Model Definition
-class LSTMPredictor(nn.Module):
-    def __init__(self, in_size, hid_size, out_size):
-        super().__init__()
-        self.lstm = nn.LSTM(
-            in_size, hid_size, num_layers=2,
-            batch_first=True, dropout=0.2
-        )
-        self.fc = nn.Linear(hid_size, out_size)
-    def forward(self, x):
-        out, _ = self.lstm(x)
-        return self.fc(out[:, -1, :])
 
-clf = LSTMPredictor(F, hidden_size, 1).to(device)
-reg = LSTMPredictor(F, hidden_size, 1).to(device)
+def get_best_options(net, state, b=10):
+    return [torch.eye(3)[i].unsqueeze(0) for i in range(3)]
 
-# 8) Losses & Optimizers
-# Weighted BCE for classification
-pos = (ycls_tr == 1).sum()
-neg = (ycls_tr == 0).sum()
-pos_weight = torch.tensor([neg/pos], device=device)
-criterion_cls = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-opt_cls = torch.optim.Adam(clf.parameters(), lr=lr)
 
-# Smooth L1 for regression
-criterion_reg = nn.SmoothL1Loss()
-opt_reg       = torch.optim.Adam(reg.parameters(), lr=lr)
+class VPN:
+    def __init__(self, network_fn, env_fn, d, k, n, max_memory, seed=0):
+        self.network_fn = network_fn
+        self.env_fn = env_fn
+        self.global_network = network_fn()
+        self.target_network = network_fn()
+        self.global_t = 0
+        self.t = 0
+        self.d = d
+        self.k = k
+        self.n = n
+        self.max_memory = max_memory
+        self.memory = []
+        self.global_optimizer = RMSprop(self.global_network.parameters(), lr=1e-3)
+        self.seed = seed
+        self._stop_training = False
 
-# 9) Training Stage 1: Classifier
-for ep in range(epochs_cls):
-    clf.train()
-    running_loss = 0.0
-    for Xb, yb_c, _ in train_loader:
-        Xb, yb_c = Xb.to(device), yb_c.to(device)
-        opt_cls.zero_grad()
-        logits = clf(Xb)
-        loss = criterion_cls(logits, yb_c)
+    def init_memory(self):
+        self.memory = []
+
+    def update_global_grads(self, net):
+        for param, shared_param in zip(net.parameters(), self.global_network.parameters()):
+            if shared_param.grad is not None:
+                continue
+            shared_param._grad = param.grad
+
+    def _train(self, rank):
+        torch.manual_seed(self.seed + rank)
+        net = self.network_fn()
+        net.load_state_dict(self.global_network.state_dict())
+        env = self.env_fn()
+        obs = env.reset()
+        done = False
+        rewards, discounts = [], []
+        t_start = self.t
+
+        while not done or (self.t - t_start) < self.n:
+            option = torch.eye(3)[random.randint(0, 2)].unsqueeze(0)
+            state = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
+            reward, discount, value, next_state = net(state, option)
+            reward = reward.item()
+            discount = discount.item()
+            rewards.append(reward)
+            discounts.append(discount)
+            obs, true_reward, done, _ = env.step()
+            self.t += 1
+            self.global_t += 1
+
+        R = 0 if done else max(rewards)
+        loss = 0
+        for i in range(len(rewards) - 1, -1, -1):
+            R = rewards[i] + discounts[i] * R
+            value_loss = (R - value) ** 2
+            loss += value_loss
+
+        self.global_optimizer.zero_grad()
         loss.backward()
-        opt_cls.step()
-        running_loss += loss.item() * Xb.size(0)
-    print(f"[CLS] Epoch {ep+1}/{epochs_cls}, Loss: {running_loss/len(train_ds):.4f}")
+        self.update_global_grads(net)
+        self.global_optimizer.step()
 
-# 10) Training Stage 2: Regressor (rain-only)
-mask = ycls_tr == 1
-X_rain = X_tr[mask]; y_rain = yreg_tr[mask]
-rain_ds = SeqDataset(X_rain, np.ones(len(y_rain)), y_rain)
-rain_loader = DataLoader(rain_ds, batch_size=batch_size, shuffle=True)
+        if rank == 0 and self.global_t % 10 == 0:
+            self.target_network.load_state_dict(self.global_network.state_dict())
 
-for ep in range(epochs_reg):
-    reg.train()
-    running_loss = 0.0
-    for Xb, _, yb_r in rain_loader:
-        Xb, yb_r = Xb.to(device), yb_r.to(device)
-        opt_reg.zero_grad()
-        preds = reg(Xb)
-        loss = criterion_reg(preds, yb_r)
-        loss.backward()
-        opt_reg.step()
-        running_loss += loss.item() * Xb.size(0)
-    print(f"[REG] Epoch {ep+1}/{epochs_reg}, Loss: {running_loss/len(rain_ds):.4f}")
+    def train(self, num_processes=2):
+        self.init_memory()
+        self.global_t = 0
+        self.t = 0
+        processes = []
+        for rank in range(num_processes):
+            p = mp.Process(target=self._train, args=(rank,))
+            p.start()
+            processes.append(p)
+        for p in processes:
+            p.join()
+        print("Training complete.")
 
-# 11) Evaluation on Test Set
-clf.eval(); reg.eval()
-all_logits, all_true_c = [], []
-all_preds_r, all_true_r = [], []
+    def test(self):
+        self._stop_training = True
 
-with torch.no_grad():
-    for Xb, yb_c, yb_r in DataLoader(test_ds, batch_size=batch_size):
-        Xb = Xb.to(device)
-        lg = clf(Xb).cpu().numpy().flatten()
-        all_logits.extend(lg)
-        all_true_c.extend(yb_c.numpy().flatten())
-        # Only regress where classifier predicts rain
-        mask = lg > 0
-        if mask.any():
-            pr = reg(Xb).cpu().numpy().flatten()[mask]
-            gt = yb_r.numpy().flatten()[mask]
-            all_preds_r.extend(pr); all_true_r.extend(gt)
+    def predict(self, input_obs):
+        with torch.no_grad():
+            option = torch.eye(3)[0].unsqueeze(0)
+            state = torch.tensor(input_obs, dtype=torch.float32).unsqueeze(0)
+            reward, discount, value, next_state = self.global_network(state, option)
+            return reward.item(), discount.item(), value.item()
 
-# Inverse‑scale & expm1
-all_preds_r = reg_scaler.inverse_transform(
-    np.array(all_preds_r).reshape(-1,1)
-).flatten()
-all_preds_r = np.expm1(all_preds_r)
 
-all_true_r = reg_scaler.inverse_transform(
-    np.array(all_true_r).reshape(-1,1)
-).flatten()
-all_true_r = np.expm1(all_true_r)
+def env_fn():
+    return RainEnv("Masters/Master_Hsinchu.csv", window_size=5)
 
-# Metrics
-acc  = accuracy_score(all_true_c, np.array(all_logits)>0)
-mae  = mean_absolute_error(all_true_r, all_preds_r)
-rmse = mean_squared_error(all_true_r, all_preds_r, squared=False)
-r2   = r2_score(all_true_r, all_preds_r)
 
-print(f"\nTest Class Accuracy: {acc:.3f}")
-print(f"Test Rain MAE: {mae:.3f}, RMSE: {rmse:.3f}, R²: {r2:.3f}")
+def network_fn():
+    input_dim = (12 - 1) * 5  # 12欄減掉 Precipitation，乘上 window_size
+    option_dim = 3
+    return VPNNetwork(input_dim, option_dim)
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='VPN Rainfall Prediction')
+    parser.add_argument('--train', action='store_true', help='Train the VPN model')
+    parser.add_argument('--predict', action='store_true', help='Predict rainfall')
+    args = parser.parse_args()
+
+    vpn = VPN(network_fn, env_fn, d=2, k=3, n=5, max_memory=1000)
+
+    if args.train:
+        vpn.train(num_processes=2)
+
+    if args.predict:
+        env = env_fn()
+        obs = env.reset()
+        reward, discount, value = vpn.predict(obs)
+        print(f"[Prediction] Reward: {reward:.2f}, Discount: {discount:.2f}, Value: {value:.2f}")
