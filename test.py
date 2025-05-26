@@ -8,7 +8,7 @@ import numpy as np
 from torch.optim import RMSprop
 
 
-class RainEnv:
+class RainEnv:  # 簡單的雨量預測環境
     def __init__(self, csv_path, window_size=5):
         self.data = pd.read_csv(csv_path)
         self.data = self.data.fillna(method='ffill')
