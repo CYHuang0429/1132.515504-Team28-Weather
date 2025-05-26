@@ -32,12 +32,12 @@ weather["RainBinary"] = (weather["Precipitation"] > 0).astype(int)  # 二元化�
 # 基本特徵
 weather["Temp_DewDiff"] = weather["AirTemperature"] - weather["DewPointTemperature"]
 weather["Delta_StationPressure"] = weather["StationPressure"] - weather["StationPressure"].shift(1)
-weather["HighHumidity"] = (weather["RelativeHumidity"] >= 90).astype(int)
-weather["RainBinary_t-1"] = weather["RainBinary"].shift(1)
-weather["IsRainingContinuously"] = ((weather["RainBinary"] == 1) & (weather["RainBinary_t-1"] == 1)).astype(int)
-weather["RH_roll3"] = weather["RelativeHumidity"].rolling(3).mean()
-weather["Precipitation_t-2"] = weather["Precipitation"].shift(2)
-weather["Pressure_drop3h"] = weather["StationPressure"] - weather["StationPressure"].shift(3)
+# weather["HighHumidity"] = (weather["RelativeHumidity"] >= 90).astype(int)
+# weather["RainBinary_t-1"] = weather["RainBinary"].shift(1)
+# weather["IsRainingContinuously"] = ((weather["RainBinary"] == 1) & (weather["RainBinary_t-1"] == 1)).astype(int)
+# weather["RH_roll3"] = weather["RelativeHumidity"].rolling(3).mean()
+# weather["Precipitation_t-2"] = weather["Precipitation"].shift(2)
+# weather["Pressure_drop3h"] = weather["StationPressure"] - weather["StationPressure"].shift(3)
 
 # 延遲特徵（可根據需求加更多 lag）
 for col in ["Precipitation", "RelativeHumidity", "WindSpeed", "Temp_DewDiff"]:
