@@ -1,198 +1,268 @@
+# import torch
+# import torch.nn as nn
+# import numpy as np
+# import pandas as pd
+# import matplotlib.pyplot as plt
+# import seaborn as sns
+# from sklearn.preprocessing import StandardScaler
+# import warnings
+# warnings.filterwarnings('ignore')
+
+# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# print(f"Using \"{device}\" to train the model.")
+
+# weather = pd.read_csv("Masters/split_master_EastHsinchu.csv")
+# weather = weather[["Month", "Date", "Hour", "AirTemperature", "Precipitation", "RelativeHumidity", "StationPressure", "WindSpeed", "WindDirection"]]
+
+# weather = weather.rename(columns={'temp': 'AirTemperature', 'datetime': 'Date'})
+# weather['Date'] = pd.to_datetime(weather['Date'])
+# weather.set_index('Date')
+# # print(weather.head(5))
+
+# weather.dropna(inplace=True)
+# # weather['month'] = weather['date'].dt.month
+# # weather_naive = weather[['date', 'temperature']].copy(deep=True)
+# # weather_naive['prev_temperature'] = weather_naive['temperature'].shift(1)
+# # weather_naive.drop([0], inplace=True)
+# # weather_naive['difference'] = weather_naive['temperature'] - weather_naive['prev_temperature']
+# # weather_naive['square_error'] = weather_naive['difference'] ** 2
+# # weather_naive.head(2)
+
+# # square_error = weather_naive['square_error'].mean()
+# print(weather.info)
+
 import torch
 import torch.nn as nn
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
 from sklearn.preprocessing import StandardScaler
-from torch.utils.data import Dataset, DataLoader
-from sklearn.metrics import (
-    accuracy_score,
-    mean_absolute_error,
-    mean_squared_error,
-    r2_score
-)
 import warnings
+from torch.utils.data import DataLoader, Dataset
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, root_mean_squared_error
 warnings.filterwarnings('ignore')
 
-# 1) Settings & Device
-window_size = 24
-hidden_size = 64
-batch_size = 64
-epochs_cls = 20
-epochs_reg = 50
-lr = 1e-3
-
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using {device} for training")
+print(f"Using \"{device}\" to train the model.")
 
-# 2) Load & Preprocess
-df = pd.read_csv("Masters/Master_Hsinchu.csv", parse_dates=["Date"])
-df.set_index("Date", inplace=True)
+weather = pd.read_csv("Masters\Master.csv")
+weather = weather[["Month", "Date", "Hour", "AirTemperature", "Precipitation", "RelativeHumidity", "StationPressure", "WindSpeed", "WindDirection"]]
 
-num_cols = [
-    "AirTemperature","DewPointTemperature","Precipitation",
-    "PrecipitationDuration","RelativeHumidity",
-    "SeaLevelPressure","StationPressure","WindSpeed","WindDirection"
-]
-df[num_cols] = df[num_cols].apply(pd.to_numeric, errors="coerce")
-df.dropna(inplace=True)
+#weather = weather.rename(columns={'temp': 'AirTemperature', 'datetime': 'Date'})
+weather['Date'] = pd.to_datetime(weather['Date'])
+weather.set_index('Date', inplace=True)
+# print(weather.head(5))
+weather[["AirTemperature", "Precipitation", "RelativeHumidity", "StationPressure", "WindSpeed", "WindDirection"]] = weather[["AirTemperature", "Precipitation", "RelativeHumidity", "StationPressure", "WindSpeed", "WindDirection"]].apply(pd.to_numeric, errors='coerce')
 
-# Derived features
-df["TempDewSpread"] = df["AirTemperature"] - df["DewPointTemperature"]
-df["LCL"]           = df["TempDewSpread"] / 0.008
-df["u_wind"]        = -df["WindSpeed"] * np.sin(np.radians(df["WindDirection"]))
-df["v_wind"]        = -df["WindSpeed"] * np.cos(np.radians(df["WindDirection"]))
-df["PressureDelta"] = df["SeaLevelPressure"].diff()
-df.dropna(inplace=True)
+weather.dropna(inplace=True)
+weather["Precipitation"] = np.log1p(weather["Precipitation"])  # log1p轉換
 
-# Raw & log-precip
-prec_orig = df["Precipitation"].values
-prec_log  = np.log1p(prec_orig)
+# 計算每個特徵的MSE
+# target = ["AirTemperature", "Precipitation", "WindSpeed"]
+target = ["Precipitation"]
+resultList = []
+for col in target:
+    temp_df = weather[[col]].copy(deep=True)
+    temp_df['prev'] = temp_df[col].shift(1)
+    temp_df.dropna(inplace=True)
+    temp_df[col]=pd.to_numeric(temp_df[col], errors='coerce')
+    temp_df['prev'] = pd.to_numeric(temp_df['prev'], errors='coerce')
 
-# 3) Build sliding windows + labels
-features = [
-    "AirTemperature","DewPointTemperature","PrecipitationDuration",
-    "RelativeHumidity","SeaLevelPressure","StationPressure",
-    "WindSpeed","WindDirection","TempDewSpread","LCL",
-    "u_wind","v_wind","PressureDelta"
-]
+    temp_df['difference'] = temp_df[col] - temp_df['prev']
+    temp_df['square_error'] = temp_df['difference'] ** 2
+    mse = temp_df['square_error'].mean()
+    resultList.append({'Feature': col, 'NativeMSE': mse})
 
-X, y_cls, y_reg = [], [], []
-for i in range(len(df) - window_size):
-    seq = df[features].iloc[i : i + window_size].values
-    X.append(seq)
-    target_p = prec_orig[i + window_size]
-    y_cls.append(1 if target_p > 0 else 0)
-    y_reg.append(prec_log[i + window_size])
+result_df = pd.DataFrame(resultList)
+print(result_df)
 
-X      = np.array(X)         # (N, window_size, F)
-y_cls  = np.array(y_cls)     # (N,)
-y_reg  = np.array(y_reg)     # (N,)
+# 標準化
+featureCols = ["AirTemperature", "Precipitation", "RelativeHumidity", "StationPressure", "WindSpeed", "WindDirection"]
 
-# 4) Scaling
-N, W, F = X.shape
-X_flat = X.reshape(-1, F)
-feat_scaler   = StandardScaler()
-X_scaled_flat = feat_scaler.fit_transform(X_flat)
-X_scaled      = X_scaled_flat.reshape(N, W, F)
+featureScaler = StandardScaler()
+featureScaled = featureScaler.fit_transform(weather[featureCols])
+featureScaled_df = pd.DataFrame(featureScaled, columns=featureCols, index=weather.index)
 
-reg_scaler = StandardScaler()
-y_reg_scaled = reg_scaler.fit_transform(y_reg.reshape(-1, 1)).flatten()
+targetScaler = StandardScaler()
+targetScaled = targetScaler.fit_transform(weather[target])
+targetScaled_df = pd.DataFrame(targetScaled, columns=target, index=weather.index)
 
-# 5) Train/Test split (time‑series)
-split = int(0.8 * N)
-X_tr, X_te = X_scaled[:split], X_scaled[split:]
-ycls_tr, ycls_te = y_cls[:split], y_cls[split:]
-yreg_tr, yreg_te = y_reg_scaled[:split], y_reg_scaled[split:]
+# Sliding Window 保留時間序列
+windowSize = 24
+Xall = featureScaled_df.values
+Yall = targetScaled_df.values
+X = []
+Y = []
+for i in range(len(Xall) - windowSize):
+    Xwindow = Xall[i:i + windowSize]
+    Ywindow = Yall[i + windowSize]
+    X.append(Xwindow)
+    Y.append(Ywindow)
+X = np.array(X)
+Y = np.array(Y)
 
-# 6) Dataset & DataLoader
-class SeqDataset(Dataset):
-    def __init__(self, X, yc, yr):
-        self.X, self.yc, self.yr = map(
-            lambda arr: torch.tensor(arr, dtype=torch.float32),
-            (X, yc.reshape(-1,1), yr.reshape(-1,1))
-        )
-    def __len__(self): return len(self.X)
-    def __getitem__(self, i): return self.X[i], self.yc[i], self.yr[i]
+# 自定義Dataset
+class WeatherDataset(Dataset):
+    def __init__(self, X, Y):
+        self.X = torch.tensor(X, dtype=torch.float32)
+        self.Y = torch.tensor(Y, dtype=torch.float32)
+        
 
-train_ds = SeqDataset(X_tr, ycls_tr, yreg_tr)
-test_ds  = SeqDataset(X_te, ycls_te, yreg_te)
-train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+    def __len__(self):
+        return len(self.X)
+    def __getitem__(self, idx):
+        return self.X[idx], self.Y[idx]
+# train_test_split
+Xtrain, Xtest, Ytrain, Ytest = train_test_split(X, Y, test_size=0.2, shuffle=False)
 
-# 7) Model Definition
-class LSTMPredictor(nn.Module):
-    def __init__(self, in_size, hid_size, out_size):
-        super().__init__()
-        self.lstm = nn.LSTM(
-            in_size, hid_size, num_layers=2,
-            batch_first=True, dropout=0.2
-        )
-        self.fc = nn.Linear(hid_size, out_size)
+train_dataset = WeatherDataset(Xtrain, Ytrain)
+test_dataset = WeatherDataset(Xtest, Ytest)
+
+batch_size = 64
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+
+for Xbatch, Ybatch in train_loader:
+    print("X_batch shape:",Xbatch.shape)
+    print("Y_batch shape:",Ybatch.shape)
+    break
+
+# LSTM
+class LSTM(nn.Module):
+    def __init__(self, inputSize, hiddenSize, outputSize):
+        super(LSTM, self).__init__()
+        self.lstm = nn.LSTM(inputSize, hiddenSize, num_layers=2, batch_first=True,dropout=0.2)
+        self.linear = nn.Linear(hiddenSize, outputSize)
+
     def forward(self, x):
-        out, _ = self.lstm(x)
-        return self.fc(out[:, -1, :])
+        lstmOut, _ = self.lstm(x)
+        out = self.linear(lstmOut[:, -1, :])
+        return out
 
-clf = LSTMPredictor(F, hidden_size, 1).to(device)
-reg = LSTMPredictor(F, hidden_size, 1).to(device)
+inputSize = len(featureCols)
+hiddenSize = 64
+numLayers = 2
+outputSize = len(target)
 
-# 8) Losses & Optimizers
-# Weighted BCE for classification
-pos = (ycls_tr == 1).sum()
-neg = (ycls_tr == 0).sum()
-pos_weight = torch.tensor([neg/pos], device=device)
-criterion_cls = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-opt_cls = torch.optim.Adam(clf.parameters(), lr=lr)
+model = LSTM(inputSize, hiddenSize, outputSize).to(device)
 
-# Smooth L1 for regression
-criterion_reg = nn.SmoothL1Loss()
-opt_reg       = torch.optim.Adam(reg.parameters(), lr=lr)
+#損失函數
+criterion = nn.MSELoss()
 
-# 9) Training Stage 1: Classifier
-for ep in range(epochs_cls):
-    clf.train()
-    running_loss = 0.0
-    for Xb, yb_c, _ in train_loader:
-        Xb, yb_c = Xb.to(device), yb_c.to(device)
-        opt_cls.zero_grad()
-        logits = clf(Xb)
-        loss = criterion_cls(logits, yb_c)
+#優化器
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+
+#訓練
+numEpochs = 100
+bestLoss = float('inf')
+patience = 5
+wait=0
+trainLosses = []
+for epoch in range(numEpochs):
+    model.train()
+    trainLoss = 0.0
+    for Xbatch, Ybatch in train_loader:
+        Xbatch = Xbatch.to(device)
+        Ybatch = Ybatch.to(device)
+
+        optimizer.zero_grad()
+        Ypred = model(Xbatch)
+        loss = criterion(Ypred, Ybatch)
         loss.backward()
-        opt_cls.step()
-        running_loss += loss.item() * Xb.size(0)
-    print(f"[CLS] Epoch {ep+1}/{epochs_cls}, Loss: {running_loss/len(train_ds):.4f}")
+        optimizer.step()
 
-# 10) Training Stage 2: Regressor (rain-only)
-mask = ycls_tr == 1
-X_rain = X_tr[mask]; y_rain = yreg_tr[mask]
-rain_ds = SeqDataset(X_rain, np.ones(len(y_rain)), y_rain)
-rain_loader = DataLoader(rain_ds, batch_size=batch_size, shuffle=True)
+        trainLoss += loss.item()*Xbatch.size(0)
 
-for ep in range(epochs_reg):
-    reg.train()
-    running_loss = 0.0
-    for Xb, _, yb_r in rain_loader:
-        Xb, yb_r = Xb.to(device), yb_r.to(device)
-        opt_reg.zero_grad()
-        preds = reg(Xb)
-        loss = criterion_reg(preds, yb_r)
-        loss.backward()
-        opt_reg.step()
-        running_loss += loss.item() * Xb.size(0)
-    print(f"[REG] Epoch {ep+1}/{epochs_reg}, Loss: {running_loss/len(rain_ds):.4f}")
+    trainLoss /= len(train_loader.dataset)
 
-# 11) Evaluation on Test Set
-clf.eval(); reg.eval()
-all_logits, all_true_c = [], []
-all_preds_r, all_true_r = [], []
+    print(f"Epoch [{epoch + 1}/{numEpochs}], Train Loss: {trainLoss:.4f}")
+    trainLosses.append(trainLoss)
+    # Early Stopping
+    if trainLoss < bestLoss:
+        bestLoss = trainLoss
+        wait = 0
+    else:
+        wait += 1
+        if wait >= patience:
+            print("Early stopping")
+            break
 
+
+
+
+# test
+model.eval()
+testLoss = 0.0
 with torch.no_grad():
-    for Xb, yb_c, yb_r in DataLoader(test_ds, batch_size=batch_size):
-        Xb = Xb.to(device)
-        lg = clf(Xb).cpu().numpy().flatten()
-        all_logits.extend(lg)
-        all_true_c.extend(yb_c.numpy().flatten())
-        # Only regress where classifier predicts rain
-        mask = lg > 0
-        if mask.any():
-            pr = reg(Xb).cpu().numpy().flatten()[mask]
-            gt = yb_r.numpy().flatten()[mask]
-            all_preds_r.extend(pr); all_true_r.extend(gt)
+    for Xbatch, Ybatch in test_loader:
+        Xbatch = Xbatch.to(device)
+        Ybatch = Ybatch.to(device)
 
-# Inverse‑scale & expm1
-all_preds_r = reg_scaler.inverse_transform(
-    np.array(all_preds_r).reshape(-1,1)
-).flatten()
-all_preds_r = np.expm1(all_preds_r)
+        Ypred = model(Xbatch)
+        loss = criterion(Ypred, Ybatch)
 
-all_true_r = reg_scaler.inverse_transform(
-    np.array(all_true_r).reshape(-1,1)
-).flatten()
-all_true_r = np.expm1(all_true_r)
+        testLoss += loss.item()*Xbatch.size(0)
 
-# Metrics
-acc  = accuracy_score(all_true_c, np.array(all_logits)>0)
-mae  = mean_absolute_error(all_true_r, all_preds_r)
-rmse = mean_squared_error(all_true_r, all_preds_r, squared=False)
-r2   = r2_score(all_true_r, all_preds_r)
+    testLoss /= len(test_loader.dataset)
+    print(f"Test Loss: {testLoss:.4f}")
 
-print(f"\nTest Class Accuracy: {acc:.3f}")
-print(f"Test Rain MAE: {mae:.3f}, RMSE: {rmse:.3f}, R²: {r2:.3f}")
+# 反標準化
+XtestTensor = torch.tensor(Xtest, dtype=torch.float32).to(device)
+model.eval()
+with torch.no_grad():
+    YpredScaled = model(XtestTensor).cpu().numpy()  
+
+YtrueScaled = Ytest 
+YpredReal = targetScaler.inverse_transform(YpredScaled)
+YtrueReal = targetScaler.inverse_transform(YtrueScaled)
+# 對 Precipitation 還原 log1p 多目標的話要改
+YpredReal[:, 0] = np.expm1(YpredReal[:, 0])
+YtrueReal[:, 0] = np.expm1(YtrueReal[:, 0])
+
+
+# for i, name in enumerate(["AirTemperature", "Precipitation", "WindSpeed"]):
+for i, name in enumerate(["Precipitation"]):
+    mae = mean_absolute_error(YtrueReal[:, i], YpredReal[:, i])
+    rmse = root_mean_squared_error(YtrueReal[:, i], YpredReal[:, i])
+    r2 = r2_score(YtrueReal[:, i], YpredReal[:, i])
+    print(f"{name} → MAE: {mae:.2f}, RMSE: {rmse:.2f}, R²: {r2:.4f}")
+
+
+plt.figure(figsize=(10, 5))
+plt.plot(trainLosses, label='Train Loss')
+plt.xlabel("Epoch")
+plt.ylabel("Loss")
+plt.title("Training Loss Over Epochs")
+plt.grid(True)
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+
+'''
+ 模型強化：加入 Dropout / 多層 LSTM / Early Stopping
+如果你覺得模型表現還能提升，可以：
+
+加入 dropout=0.2
+
+設 num_layers=2 的多層 LSTM
+
+用 ReduceLROnPlateau 或 early stopping 減少過擬合
+
+
+'''
+
+
+
+# weather['month'] = weather['date'].dt.month
+# weather_naive = weather[['date', 'temperature']].copy(deep=True)
+# weather_naive['prev_temperature'] = weather_naive['temperature'].shift(1)
+# weather_naive.drop([0], inplace=True)
+# weather_naive['difference'] = weather_naive['temperature'] - weather_naive['prev_temperature']
+# weather_naive['square_error'] = weather_naive['difference'] ** 2
+# weather_naive.head(2)
+
+# square_error = weather_naive['square_error'].mean()
+print(weather.info)
