@@ -9,7 +9,7 @@ from sklearn.preprocessing import StandardScaler
 import warnings
 from torch.utils.data import DataLoader, Dataset
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, root_mean_squared_error, classification_report, confusion_matrix, precision_recall_curve
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, classification_report, confusion_matrix, precision_recall_curve
 from imblearn.over_sampling import RandomOverSampler
 
 warnings.filterwarnings('ignore')
@@ -47,8 +47,8 @@ for col in ["Precipitation", "RelativeHumidity", "WindSpeed", "Temp_DewDiff"]:
 weather = weather.dropna().reset_index(drop=True)
 
 # 計算每個特徵的MSE
-# target = ["AirTemperature", "Precipitation", "WindSpeed"]
-target = ["Precipitation"]
+target = ["AirTemperature", "Precipitation", "WindSpeed"]
+#target = ["Precipitation"]
 binarrTarget = ["RainBinary"]
 resultList = []
 for col in target:
@@ -108,16 +108,31 @@ Yc = np.array(Yc)
 class WeatherDataset(Dataset):
     def __init__(self, X, Y):
         self.X = torch.tensor(X, dtype=torch.float32)
-        self.Y = torch.tensor(Y, dtype=torch.long)
+        self.Y = torch.tensor(Y, dtype=torch.float32)
         
 
     def __len__(self):
         return len(self.X)
     def __getitem__(self, idx):
         return self.X[idx], self.Y[idx]
+    
+class WeatherMultiOutputDataset(Dataset):
+    def __init__(self, X, Y_reg, Y_cls):
+        self.X = torch.tensor(X, dtype=torch.float32)
+        self.Y_reg = torch.tensor(Y_reg, dtype=torch.float32)  # 回歸目標
+        self.Y_cls = torch.tensor(Y_cls, dtype=torch.float32)  # 分類目標（二值）
+
+    def __len__(self):
+        return len(self.X)
+
+    def __getitem__(self, idx):
+        return self.X[idx], self.Y_reg[idx], self.Y_cls[idx]
+
 # train_test_split
 XtrainFull, Xtest, YtrainFull, Ytest, YctrainFull, Yctest = train_test_split(X, Y, Yc,test_size=0.1, shuffle=False)
 Xtrain, Xval, Ytrain, Yval, Yctrain, Ycval = train_test_split(XtrainFull, YtrainFull, YctrainFull, test_size=0.1111, shuffle=False)
+
+batch_size = 64
 
 train_dataset = WeatherDataset(Xtrain, Ytrain)
 val_dataset = WeatherDataset(Xval, Yval)
@@ -127,14 +142,22 @@ train_dataset_c = WeatherDataset(Xtrain, Yctrain)
 val_dataset_c = WeatherDataset(Xval, Ycval)
 test_dataset_c = WeatherDataset(Xtest, Yctest)
 
+train_dataset_multi = WeatherMultiOutputDataset(Xtrain, Ytrain, Yctrain)
+val_dataset_multi = WeatherMultiOutputDataset(Xval, Yval, Ycval)
+test_dataset_multi = WeatherMultiOutputDataset(Xtest, Ytest, Yctest)
+
+train_loader_multi = DataLoader(train_dataset_multi, batch_size=batch_size, shuffle=True)
+val_loader_multi = DataLoader(val_dataset_multi, batch_size=batch_size, shuffle=False)
+test_loader_multi = DataLoader(test_dataset_multi, batch_size=batch_size, shuffle=False)
+
+
 train_dataset_reg = WeatherDataset(Xtrain, Ytrain)
 val_dataset_reg = WeatherDataset(Xval, Yval)
 
-batch_size = 64
 train_loader = DataLoader(train_dataset_c, batch_size=batch_size, shuffle=True)
 val_loader = DataLoader(val_dataset_c, batch_size=batch_size, shuffle=False)
 train_loader_reg = DataLoader(train_dataset_reg, batch_size=batch_size, shuffle=False)
-val_loader_reg = DataLoader(train_dataset_reg, batch_size=batch_size, shuffle=False)
+val_loader_reg = DataLoader(val_dataset_reg, batch_size=batch_size, shuffle=False)
 
 for Xbatch, Ybatch in train_loader:
     print("X_batch shape:",Xbatch.shape)
@@ -173,14 +196,31 @@ class LSTM(nn.Module):
         lstmOut, _ = self.lstm(x)
         out = self.linear(lstmOut[:, -1, :])
         return out
+    
+class MultiTaskLSTM(nn.Module):
+    def __init__(self, input_size, hidden_size, output_size_reg):
+        super(MultiTaskLSTM, self).__init__()
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers=3, batch_first=True, dropout=0.3, bidirectional=True)
+        self.attn = nn.MultiheadAttention(embed_dim=hidden_size*2, num_heads=2, batch_first=True)
+        self.fc_reg = nn.Linear(hidden_size*2, output_size_reg)  # 回歸分支
+        self.fc_cls = nn.Linear(hidden_size*2, 1)                # 分類分支
+
+    def forward(self, x):
+        lstm_out, _ = self.lstm(x)
+        attn_out, _ = self.attn(lstm_out, lstm_out, lstm_out)
+        out = attn_out[:, -1, :]
+        reg_out = self.fc_reg(out)
+        cls_out = self.fc_cls(out)
+        return reg_out, cls_out
+
 
 inputSize = len(featureCols)
 hiddenSize = 64
 numLayers = 2
 outputSize = len(target)
 
-model = LSTM(inputSize, hiddenSize, outputSize).to(device)
-
+#model = LSTM(inputSize, hiddenSize, outputSize).to(device)
+model = MultiTaskLSTM(inputSize, hiddenSize, outputSize).to(device)
 #損失函數
 criterion = nn.MSELoss()
 
@@ -200,6 +240,7 @@ patience = 5
 wait=0
 trainLosses = []
 validLosses = []
+
 for epoch in range(numEpochs):
     classification_model.train()
     trainLoss = 0.0
@@ -265,7 +306,7 @@ for epoch in range(numEpochs):
         Ybatch = Ybatch.float().to(device)
 
         optimizer.zero_grad()
-        Ypred = model(Xbatch)
+        Ypred,_ = model(Xbatch)
         loss = criterion(Ypred, Ybatch)
         loss.backward()
         optimizer.step()
@@ -283,7 +324,7 @@ for epoch in range(numEpochs):
             Xbatch = Xbatch.to(device)
             Ybatch = Ybatch.float().to(device)
 
-            Ypred = model(Xbatch)
+            Ypred,_ = model(Xbatch)
             loss = criterion(Ypred, Ybatch)
             valLoss += loss.item() * Xbatch.size(0)
 
@@ -303,9 +344,10 @@ for epoch in range(numEpochs):
             print("🛑 Early stopping regression training")
             break
 
-
+'''
 classification_model.load_state_dict(torch.load("best_classifier.pt"))
 classification_model.eval()
+'''
 
 with torch.no_grad():
     Xtest_tensor = torch.tensor(Xtest, dtype=torch.float32).to(device)
@@ -344,26 +386,33 @@ classification_model.load_state_dict(torch.load("best_classifier.pt"))
 classification_model.eval()
 with torch.no_grad():
     X_rain_tensor = torch.tensor(X_rain, dtype=torch.float32).to(device)
-    Y_rain_pred_scaled = model(X_rain_tensor).cpu().numpy()
+    #Y_rain_pred_scaled = model(X_rain_tensor).cpu().numpy()
+    _, Y_rain_pred_scaled = model(X_rain_tensor)
+    Y_rain_pred_scaled = Y_rain_pred_scaled.cpu().numpy()
+
 
 # 反標準化 + 還原 log1p
+precip_idx = target.index("Precipitation")
+
 Y_rain_true_real = targetScaler.inverse_transform(Y_rain_true)
 Y_rain_pred_real = targetScaler.inverse_transform(Y_rain_pred_scaled)
 
-Y_rain_true_real[:, 0] = np.expm1(Y_rain_true_real[:, 0])
-Y_rain_pred_real[:, 0] = np.expm1(Y_rain_pred_real[:, 0])
+Y_rain_true_real[:, precip_idx] = np.expm1(Y_rain_true_real[:, precip_idx])
+Y_rain_pred_real[:, precip_idx] = np.expm1(Y_rain_pred_real[:, precip_idx])
 
 # 評估回歸效果
-
-mae = mean_absolute_error(Y_rain_true_real[:, 0], Y_rain_pred_real[:, 0])
-rmse = np.sqrt(mean_squared_error(Y_rain_true_real[:, 0], Y_rain_pred_real[:, 0]))
-r2 = r2_score(Y_rain_true_real[:, 0], Y_rain_pred_real[:, 0])
-print(f"Precipitation on Rainy Hours → MAE: {mae:.2f}, RMSE: {rmse:.2f}, R²: {r2:.4f}")
+print("\n=== Multi-Target Evaluation on Rainy Hours ===")
+for i, var in enumerate(target):
+    mae = mean_absolute_error(Y_rain_true_real[:, i], Y_rain_pred_real[:, i])
+    rmse = np.sqrt(mean_squared_error(Y_rain_true_real[:, i], Y_rain_pred_real[:, i]))
+    r2 = r2_score(Y_rain_true_real[:, i], Y_rain_pred_real[:, i])
+    print(f"{var:<15} → MAE: {mae:.2f}, RMSE: {rmse:.2f}, R²: {r2:.4f}")
 
 # 畫圖：預測 vs 真實的降雨量（只針對預測為下雨的樣本）
 plt.figure(figsize=(10, 5))
-plt.plot(Y_rain_true_real[:, 0], label='True Rainfall', marker='o')
-plt.plot(Y_rain_pred_real[:, 0], label='Predicted Rainfall', marker='x')
+precip_idx = target.index("Precipitation")
+plt.plot(Y_rain_true_real[:, precip_idx], label='True Rainfall', marker='o')
+plt.plot(Y_rain_pred_real[:, precip_idx], label='Predicted Rainfall', marker='x')
 plt.xlabel("Sample Index")
 plt.ylabel("Precipitation (mm)")
 plt.title("Predicted vs Actual Rainfall on Rainy Hours")
@@ -392,310 +441,16 @@ plt.title("Confusion Matrix")
 plt.tight_layout()
 plt.show()
 
-'''
-model.eval()
-testLoss = 0.0
-with torch.no_grad():
-    for Xbatch, Ybatch in test_loader:
-        Xbatch = Xbatch.to(device)
-        Ybatch = Ybatch.to(device)
-
-        Ypred = model(Xbatch)
-        loss = criterion(Ypred, Ybatch)
-
-        testLoss += loss.item()*Xbatch.size(0)
-
-    testLoss /= len(test_loader.dataset)
-    print(f"Test Loss: {testLoss:.4f}")
-
-# 反標準化
-XtestTensor = torch.tensor(Xtest, dtype=torch.float32).to(device)
-model.eval()
-with torch.no_grad():
-    YpredScaled = model(XtestTensor).cpu().numpy()  
-
-YtrueScaled = Ytest 
-YpredReal = targetScaler.inverse_transform(YpredScaled)
-YtrueReal = targetScaler.inverse_transform(YtrueScaled)
-# 對 Precipitation 還原 log1p 多目標的話要改
-YpredReal[:, 0] = np.expm1(YpredReal[:, 0])
-YtrueReal[:, 0] = np.expm1(YtrueReal[:, 0])
-
-
-# for i, name in enumerate(["AirTemperature", "Precipitation", "WindSpeed"]):
-for i, name in enumerate(["Precipitation"]):
-    mae = mean_absolute_error(YtrueReal[:, i], YpredReal[:, i])
-    rmse = root_mean_squared_error(YtrueReal[:, i], YpredReal[:, i])
-    r2 = r2_score(YtrueReal[:, i], YpredReal[:, i])
-    print(f"{name} → MAE: {mae:.2f}, RMSE: {rmse:.2f}, R²: {r2:.4f}")
-
-
-plt.figure(figsize=(10, 5))
-plt.plot(trainLosses, label='Train Loss')
-plt.plot(validLosses, label='Validation Loss')
-plt.xlabel("Epoch")
-plt.ylabel("Loss")
-plt.title("Train vs Validation Loss Over Epochs")
-plt.grid(True)
-plt.legend()
-plt.tight_layout()
-plt.show()
-'''
-
-
-'''
-import torch
-import torch.nn as nn
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-from sklearn.preprocessing import StandardScaler
-import warnings
-from torch.utils.data import DataLoader, Dataset
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, precision_score, recall_score, f1_score
-from imblearn.over_sampling import RandomOverSampler
-
-warnings.filterwarnings('ignore')
-
-# 0. reproducibility
-torch.manual_seed(42)
-np.random.seed(42)
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using \"{device}\" to train the model.")
-
-# ------------------------------------------------
-# 1. Load & preprocess data
-weather = pd.read_csv("Masters/Master_Hsinchu.csv")
-cols = ["Month", "Date", "Hour", "AirTemperature", "DewPointTemperature",
-        "Precipitation", "PrecipitationDuration", "RelativeHumidity",
-        "SeaLevelPressure", "StationPressure", "WindSpeed", "WindDirection"]
-weather = weather[cols]
-weather['Date'] = pd.to_datetime(weather['Date'])
-weather.set_index('Date', inplace=True)
-weather = weather.apply(pd.to_numeric, errors='coerce')
-weather.dropna(inplace=True)
-weather["Precipitation"] = np.log1p(weather["Precipitation"])
-weather["RainBinary"] = (weather["Precipitation"] > 0).astype(int)
-
-featureCols = ["AirTemperature", "DewPointTemperature", "Precipitation",
-               "PrecipitationDuration", "RelativeHumidity", "SeaLevelPressure",
-               "StationPressure", "WindSpeed", "WindDirection"]
-target = ["Precipitation"]
-windowSize = 24
-
-# ------------------------------------------------
-# 2. Time-based split & scaling (fit only on train)
-split_ratio = (0.8, 0.1, 0.1)  # train/val/test
-n = len(weather)
-train_end = int(n * split_ratio[0])
-val_end = int(n * (split_ratio[0] + split_ratio[1]))
-
-train_df = weather.iloc[:train_end]
-val_df = weather.iloc[train_end:val_end]
-test_df = weather.iloc[val_end:]
-
-featureScaler = StandardScaler().fit(train_df[featureCols])
-targetScaler = StandardScaler().fit(train_df[target])
-
-def scale(df, scaler, cols):
-    return pd.DataFrame(scaler.transform(df[cols]), columns=cols, index=df.index)
-
-train_feat = scale(train_df, featureScaler, featureCols)
-val_feat = scale(val_df, featureScaler, featureCols)
-test_feat = scale(test_df, featureScaler, featureCols)
-
-train_tgt = scale(train_df, targetScaler, target)
-val_tgt = scale(val_df, targetScaler, target)
-test_tgt = scale(test_df, targetScaler, target)
-
-# ------------------------------------------------
-# 3. Sliding window builder
-def build_windows(Xdf, Ydf, Ybin, win):
-    Xa, Ya, Yc = [], [], []
-    for i in range(len(Xdf) - win):
-        Xa.append(Xdf.iloc[i:i+win].values)
-        Ya.append(Ydf.iloc[i+win].values)
-        Yc.append(Ybin.iloc[i+win])
-    return np.array(Xa), np.array(Ya), np.array(Yc)
-
-Xtrain, Ytrain, Yctrain = build_windows(train_feat, train_tgt, train_df["RainBinary"], windowSize)
-Xval, Yval, Ycval = build_windows(val_feat, val_tgt, val_df["RainBinary"], windowSize)
-Xtest, Ytest, Yctest = build_windows(test_feat, test_tgt, test_df["RainBinary"], windowSize)
-
-# ------------------------------------------------
-# 4. Oversample minority class for classification
-eros = RandomOverSampler(random_state=42)
-X2d = Xtrain.reshape(Xtrain.shape[0], -1)
-Xros, Ycros = eros.fit_resample(X2d, Yctrain)
-Xtrain_ros = Xros.reshape(-1, windowSize, len(featureCols))
-Yctrain_ros = Ycros
-
-# ------------------------------------------------
-# Dataset & DataLoader definitions
-class WeatherDataset(Dataset):
-    def __init__(self, X, Y):
-        self.X = torch.tensor(X, dtype=torch.float32)
-        self.Y = torch.tensor(Y, dtype=torch.float32)
-    def __len__(self): return len(self.X)
-    def __getitem__(self, idx): return self.X[idx], self.Y[idx]
-
-batch_size = 64
-train_loader = DataLoader(WeatherDataset(Xtrain_ros, Yctrain_ros), batch_size=batch_size, shuffle=True)
-val_loader = DataLoader(WeatherDataset(Xval, Ycval), batch_size=batch_size, shuffle=False)
-train_loader_reg = DataLoader(WeatherDataset(Xtrain, Ytrain.squeeze()), batch_size=batch_size, shuffle=True)
-val_loader_reg = DataLoader(WeatherDataset(Xval, Yval.squeeze()), batch_size=batch_size, shuffle=False)
-
-# ------------------------------------------------
-# 5. Define models
-class LSTMClassifier(nn.Module):
-    def __init__(self, input_dim, hidden_dim):
-        super().__init__()
-        self.encoder = nn.LSTM(input_dim, hidden_dim, num_layers=3,
-                               batch_first=True, dropout=0.3,
-                               bidirectional=True)
-        self.head = nn.Linear(hidden_dim*2, 1)
-    def forward(self, x):
-        h, _ = self.encoder(x)
-        return self.head(h[:, -1]).squeeze(1)
-
-class LSTMRegressor(nn.Module):
-    def __init__(self, input_dim, hidden_dim, out_dim):
-        super().__init__()
-        self.encoder = nn.LSTM(input_dim, hidden_dim, num_layers=3,
-                               batch_first=True, dropout=0.3)
-        self.head = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim//2),
-            nn.ReLU(),
-            nn.Linear(hidden_dim//2, out_dim)
-        )
-    def forward(self, x):
-        h, _ = self.encoder(x)
-        return self.head(h[:, -1]).squeeze(1)
-
-hiddenSize = 64
-cls_model = LSTMClassifier(len(featureCols), hiddenSize).to(device)
-reg_model = LSTMRegressor(len(featureCols), hiddenSize, len(target)).to(device)
-
-# Weighted BCE for classification
-pos_weight = torch.tensor([(len(Yctrain_ros) - Yctrain_ros.sum()) / Yctrain_ros.sum()]).to(device)
-criterion_c = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-optimizer_c = torch.optim.Adam(cls_model.parameters(), lr=0.001)
-
-criterion_reg = nn.MSELoss()
-optimizer_reg = torch.optim.Adam(reg_model.parameters(), lr=0.001)
-
-# ------------------------------------------------
-# 6. Training & evaluation helpers
-def train_epoch(model, loader, criterion, optimizer):
-    model.train()
-    total_loss = 0
-    for xb, yb in loader:
-        xb, yb = xb.to(device), yb.to(device)
-        optimizer.zero_grad()
-        preds = model(xb)
-        loss = criterion(preds, yb)
-        loss.backward()
-        optimizer.step()
-        total_loss += loss.item() * len(xb)
-    return total_loss / len(loader.dataset)
-
-@torch.no_grad()
-def eval_epoch(model, loader, criterion):
-    model.eval()
-    total_loss = 0
-    for xb, yb in loader:
-        xb, yb = xb.to(device), yb.to(device)
-        preds = model(xb)
-        loss = criterion(preds, yb)
-        total_loss += loss.item() * len(xb)
-    return total_loss / len(loader.dataset)
-
-# ------------------------------------------------
-# 7. Train classification model
-numEpochs = 100
-best_val = float('inf')
-patience = 5
-wait = 0
-for epoch in range(numEpochs):
-    tr_loss = train_epoch(cls_model, train_loader, criterion_c, optimizer_c)
-    val_loss = eval_epoch(cls_model, val_loader, criterion_c)
-    print(f"[CLS Epoch {epoch+1}] Train Loss: {tr_loss:.4f}, Val Loss: {val_loss:.4f}")
-    if val_loss < best_val:
-        best_val = val_loss
-        wait = 0
-        torch.save(cls_model.state_dict(), "best_classifier.pt")
-    else:
-        wait += 1
-        if wait >= patience:
-            print("Early stopping classification")
-            break
-
-# ------------------------------------------------
-# 8. Train regression model
-best_val_r = float('inf')
-wait = 0
-for epoch in range(numEpochs):
-    tr_loss = train_epoch(reg_model, train_loader_reg, criterion_reg, optimizer_reg)
-    val_loss = eval_epoch(reg_model, val_loader_reg, criterion_reg)
-    print(f"[REG Epoch {epoch+1}] Train Loss: {tr_loss:.4f}, Val Loss: {val_loss:.4f}")
-    if val_loss < best_val_r:
-        best_val_r = val_loss
-        wait = 0
-        torch.save(reg_model.state_dict(), "best_regressor.pt")
-    else:
-        wait += 1
-        if wait >= patience:
-            print("Early stopping regression")
-            break
-
-# ------------------------------------------------
-# 9. Test evaluation
-cls_model.load_state_dict(torch.load("best_classifier.pt"))
-reg_model.load_state_dict(torch.load("best_regressor.pt"))
-cls_model.eval()
-reg_model.eval()
-
-# Classification metrics
-Xtest_tensor = torch.tensor(Xtest, dtype=torch.float32).to(device)
-with torch.no_grad():
-    logits = cls_model(Xtest_tensor)
-    probs = torch.sigmoid(logits).cpu().numpy()
-preds = (probs >= 0.5).astype(int)
-print("Precision:", precision_score(Yctest, preds))
-print("Recall:   ", recall_score(Yctest, preds))
-print("F1 Score: ", f1_score(Yctest, preds))
-
-# Regression on rainy samples
-rain_idx = np.where(preds == 1)[0]
-X_rain = Xtest[rain_idx]
-Y_rain_true = Ytest[rain_idx].squeeze()
-X_rain_tensor = torch.tensor(X_rain, dtype=torch.float32).to(device)
-with torch.no_grad():
-    pred_sc = reg_model(X_rain_tensor).cpu().numpy()
-# inverse transform and expm1
-y_true = targetScaler.inverse_transform(Y_rain_true.reshape(-1,1)).squeeze()
-y_pred = targetScaler.inverse_transform(pred_sc.reshape(-1,1)).squeeze()
-y_true = np.expm1(y_true)
-y_pred = np.expm1(y_pred)
-print(f"Rainy MAE: {mean_absolute_error(y_true, y_pred):.2f}")
-print(f"Rainy RMSE:{np.sqrt(mean_squared_error(y_true, y_pred)):.2f}")
-print(f"Rainy R2:  {r2_score(y_true, y_pred):.4f}")
-
-# Plot classification probabilities vs actual
-plt.figure(figsize=(12,4))
-plt.plot(probs[:200], label="Pred Prob")
-plt.plot(Yctest[:200], label="Actual RainBinary")
-plt.legend()
-plt.title("Rain Prediction vs Actual")
-plt.grid(True)
-plt.tight_layout()
-plt.show()
-
-'''
-
-
-
+for i, var in enumerate(target):
+    plt.figure(figsize=(10, 4))
+    plt.plot(Y_rain_true_real[:, i], label=f'True {var}', marker='o')
+    plt.plot(Y_rain_pred_real[:, i], label=f'Predicted {var}', marker='x')
+    plt.xlabel("Sample Index")
+    plt.ylabel(var)
+    plt.title(f"{var} Prediction on Rainy Hours")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
 
 #print(weather.info)
