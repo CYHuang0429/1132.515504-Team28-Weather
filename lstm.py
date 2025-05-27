@@ -31,12 +31,6 @@ weather["RainBinary"] = (weather["Precipitation"] > 0).astype(int)  # 二元化�
 # 基本特徵
 weather["Temp_DewDiff"] = weather["AirTemperature"] - weather["DewPointTemperature"]
 weather["Delta_StationPressure"] = weather["StationPressure"] - weather["StationPressure"].shift(1)
-# weather["HighHumidity"] = (weather["RelativeHumidity"] >= 90).astype(int)
-# weather["RainBinary_t-1"] = weather["RainBinary"].shift(1)
-# weather["IsRainingContinuously"] = ((weather["RainBinary"] == 1) & (weather["RainBinary_t-1"] == 1)).astype(int)
-# weather["RH_roll3"] = weather["RelativeHumidity"].rolling(3).mean()
-# weather["Precipitation_t-2"] = weather["Precipitation"].shift(2)
-# weather["Pressure_drop3h"] = weather["StationPressure"] - weather["StationPressure"].shift(3)
 
 # 延遲特徵（可根據需求加更多 lag）
 for col in ["Precipitation", "RelativeHumidity", "WindSpeed", "Temp_DewDiff"]:
@@ -203,11 +197,10 @@ inputSize = len(featureCols)
 hiddenSize = 64
 outputSize = len(target)
 model = MultiTaskLSTM(inputSize, hiddenSize, outputSize).to(device)
- 
- # 損失函數：回歸 + 分類
+
 criterion_reg = nn.MSELoss()
-pos_weight   = torch.tensor([8.0], device=device)
-criterion_cls = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+criterion_cls = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([8.0], device=device))
+
 
 # 優化器：一次更新所有參數
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
@@ -269,6 +262,33 @@ for epoch in range(numEpochs):
         if wait_mt >= patience_mt:
             print("  🛑 early stopping")
             break
+
+model.load_state_dict(torch.load("best_multitask_model.pt", map_location=device))
+model.eval()
+
+best_recall = 0.0
+best_pw     = None
+for pw in [1.0, 2.0, 4.0, 8.0, 16.0]:
+    criterion_cls_tmp = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([pw], device=device))
+    tp = fn = 0
+    with torch.no_grad():
+        for Xb, _, Ycls_b in val_loader:        # 用 val_loader（验证集）评估
+            Xb = Xb.to(device)
+            _, logits = model(Xb)
+            probs = torch.sigmoid(logits)
+            preds = (probs >= 0.5).float()
+            tp += ((preds==1)&(Ycls_b.view(-1,1).to(device)==1)).sum().item()
+            fn += ((preds==0)&(Ycls_b.view(-1,1).to(device)==1)).sum().item()
+    recall = tp / (tp + fn + 1e-6)
+    print(f"pw={pw:>4} → Recall={recall:.3f}")
+    if recall > best_recall:
+        best_recall, best_pw = recall, pw
+
+print(f"最佳 pos_weight = {best_pw}, recall = {best_recall:.3f}")
+
+criterion_reg = nn.MSELoss()
+criterion_cls = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([best_pw], device=device))
+
 # 回歸專用訓練迴圈 (Regression-Only Training)
 numEpochs = 100
 best_val_loss_reg = float('inf')    # best validation loss for regression
@@ -357,34 +377,7 @@ rain_preds = (rain_probs >= best_threshold).astype(int)
 
 print("=== Classification Report on Test Set ===")
 print(classification_report(Yctest.flatten(), rain_preds, target_names=["No Rain", "Rain"]))
-# 計算 precision-recall curve
-precisions, recalls, thresholds = precision_recall_curve(Yctest.flatten(), rain_probs)
 
-# 計算 F1 分數
-thresholds = np.append(thresholds, 1.0)  
-f1_scores = 2 * (precisions * recalls) / (precisions + recalls + 1e-6)
-best_idx = np.argmax(f1_scores)
-best_threshold = thresholds[best_idx]
-
-print(f"Best Threshold: {best_threshold:.2f}")
-print(f"Precision at Best Threshold: {precisions[best_idx]:.2f}")
-print(f"Recall at Best Threshold:    {recalls[best_idx]:.2f}")
-print(f"F1 Score at Best Threshold:  {f1_scores[best_idx]:.2f}")
-
-# 重新根據 best_threshold 產生預測
-rain_preds = (rain_probs >= best_threshold).astype(int)
-
-# 評估模型分類性能
-print("=== Classification Report ===")
-print(classification_report(Yctest.flatten(), rain_preds, target_names=["No Rain", "Rain"]))
-
-
-# 測試模型載入
-# # 測試模型載入
-# model.load_state_dict(torch.load("best_classifier.pt"))
-# model.eval()
-# model.load_state_dict(torch.load("best_model.pt"))
-# model.eval()
 # 只載入多任務模型
 model.load_state_dict(
     torch.load("best_regression_model.pt", map_location=device)
@@ -410,6 +403,20 @@ for i, var in enumerate(target):
     rmse = np.sqrt(mean_squared_error(Y_test_real[:, i], Y_pred_real[:, i]))
     r2 = r2_score(Y_test_real[:, i], Y_pred_real[:, i])
     print(f"{var:<15} → MAE: {mae:.2f}, RMSE: {rmse:.2f}, R²: {r2:.4f}")
+
+precip_idx = target.index("Precipitation")
+rain_mask  = Y_test_real[:, precip_idx] > 0
+mae_rain  = mean_absolute_error(
+    Y_test_real[rain_mask, precip_idx],
+    Y_pred_real[rain_mask, precip_idx]
+)
+rmse_rain = np.sqrt(mean_squared_error(
+    Y_test_real[rain_mask, precip_idx],
+    Y_pred_real[rain_mask, precip_idx]
+))
+print("=== Rainy-Hours Precipitation Regression ===")
+print(f"MAE (雨天时段): {mae_rain:.2f} mm")
+print(f"RMSE(雨天时段): {rmse_rain:.2f} mm")
 
 # 畫圖：預測 vs 真實的降雨量（只針對預測為下雨的樣本）
 plt.figure(figsize=(10, 5))
