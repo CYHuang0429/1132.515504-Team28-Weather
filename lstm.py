@@ -374,20 +374,40 @@ rain_preds = (rain_probs >= best_threshold).astype(int)
 print("=== Classification Report ===")
 print(classification_report(Yctest.flatten(), rain_preds, target_names=["No Rain", "Rain"]))
 
-# test
-rain_indices = np.where(rain_preds == 1)[0]
+# # test
+# rain_indices = np.where(rain_preds == 1)[0]
 
-X_rain = Xtest[rain_indices]
-Y_rain_true = Ytest[rain_indices]
+# X_rain = Xtest[rain_indices]
+# Y_rain_true = Ytest[rain_indices]
+
+# # 測試模型載入
+# classification_model.load_state_dict(torch.load("best_classifier.pt"))
+# classification_model.eval()
+# with torch.no_grad():
+#     X_rain_tensor = torch.tensor(X_rain, dtype=torch.float32).to(device)
+#     #Y_rain_pred_scaled = model(X_rain_tensor).cpu().numpy()
+#     Y_rain_pred_scaled, _ = model(X_rain_tensor)
+#     Y_rain_pred_scaled = Y_rain_pred_scaled.cpu().numpy()
 
 # 測試模型載入
 classification_model.load_state_dict(torch.load("best_classifier.pt"))
 classification_model.eval()
+model.load_state_dict(torch.load("best_model.pt"))
+model.eval()
+
 with torch.no_grad():
-    X_rain_tensor = torch.tensor(X_rain, dtype=torch.float32).to(device)
-    #Y_rain_pred_scaled = model(X_rain_tensor).cpu().numpy()
-    Y_rain_pred_scaled, _ = model(X_rain_tensor)
-    Y_rain_pred_scaled = Y_rain_pred_scaled.cpu().numpy()
+    Xtest_tensor = torch.tensor(Xtest, dtype=torch.float32).to(device)
+    Y_pred_scaled, _ = model(Xtest_tensor)
+    Y_pred_scaled = Y_pred_scaled.cpu().numpy()
+
+precip_idx = target.index("Precipitation")
+# 反標準化 + 還原 log1p
+Y_test_real = targetScaler.inverse_transform(Ytest)
+Y_pred_real = targetScaler.inverse_transform(Y_pred_scaled)
+
+Y_test_real[:, precip_idx] = np.expm1(Y_test_real[:, precip_idx])
+Y_pred_real[:, precip_idx] = np.expm1(Y_pred_real[:, precip_idx])
+
 
 
 # 反標準化 + 還原 log1p
@@ -460,7 +480,8 @@ output_df = pd.DataFrame({
     "Pred_Precipitation": Y_rain_pred_real[:, 1],
     "True_WindSpeed": Y_rain_true_real[:, 2],
     "Pred_WindSpeed": Y_rain_pred_real[:, 2],
-    "Pred_RainBinary": rain_preds[rain_indices],  # 新增的欄位
+    "True_RainBinary": Yctest.flatten(),
+    "Pred_RainBinary": rain_preds,  # 新增的欄位
 })
 
 output_df.index.name = "SampleIndex"
