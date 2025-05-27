@@ -10,7 +10,6 @@ import warnings
 from torch.utils.data import DataLoader, Dataset
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, classification_report, confusion_matrix, precision_recall_curve
-from imblearn.over_sampling import RandomOverSampler
 
 warnings.filterwarnings('ignore')
 
@@ -132,7 +131,7 @@ XtrainFull, Xtest, YtrainFull, Ytest, YctrainFull, Yctest = train_test_split(X, 
 Xtrain, Xval, Ytrain, Yval, Yctrain, Ycval = train_test_split(XtrainFull, YtrainFull, YctrainFull, test_size=0.1111, shuffle=False)
 
 batch_size = 64
-
+'''
 train_dataset = WeatherDataset(Xtrain, Ytrain)
 val_dataset = WeatherDataset(Xval, Yval)
 test_dataset = WeatherDataset(Xtest, Ytest)
@@ -140,76 +139,62 @@ test_dataset = WeatherDataset(Xtest, Ytest)
 train_dataset_c = WeatherDataset(Xtrain, Yctrain)
 val_dataset_c = WeatherDataset(Xval, Ycval)
 test_dataset_c = WeatherDataset(Xtest, Yctest)
-
+'''
 train_dataset_multi = WeatherMultiOutputDataset(Xtrain, Ytrain, Yctrain)
 val_dataset_multi = WeatherMultiOutputDataset(Xval, Yval, Ycval)
 test_dataset_multi = WeatherMultiOutputDataset(Xtest, Ytest, Yctest)
 
-train_loader_multi = DataLoader(train_dataset_multi, batch_size=batch_size, shuffle=True)
-val_loader_multi = DataLoader(val_dataset_multi, batch_size=batch_size, shuffle=False)
-test_loader_multi = DataLoader(test_dataset_multi, batch_size=batch_size, shuffle=False)
-
-
+train_loader = DataLoader(train_dataset_multi, batch_size=batch_size, shuffle=True)
+val_loader = DataLoader(val_dataset_multi, batch_size=batch_size, shuffle=False)
+test_loader = DataLoader(test_dataset_multi, batch_size=batch_size, shuffle=False)
 train_dataset_reg = WeatherDataset(Xtrain, Ytrain)
-val_dataset_reg = WeatherDataset(Xval, Yval)
+val_dataset_reg   = WeatherDataset(Xval,   Yval)
+train_loader_reg  = DataLoader(train_dataset_reg, batch_size=batch_size, shuffle=True)
+val_loader_reg    = DataLoader(val_dataset_reg,   batch_size=batch_size, shuffle=False)
 
-train_loader = DataLoader(train_dataset_c, batch_size=batch_size, shuffle=True)
-val_loader = DataLoader(val_dataset_c, batch_size=batch_size, shuffle=False)
-train_loader_reg = DataLoader(train_dataset_reg, batch_size=batch_size, shuffle=False)
-val_loader_reg = DataLoader(val_dataset_reg, batch_size=batch_size, shuffle=False)
 
 for Xbatch, Ybatch in train_loader:
     print("X_batch shape:",Xbatch.shape)
     print("Y_batch shape:",Ybatch.shape)
     break
-
-class LSTMClassifier(nn.Module):
-    def __init__(self, inputSize, hiddenSize):
-        super(LSTMClassifier, self).__init__()
-        self.lstm = nn.LSTM(inputSize, hiddenSize, num_layers=3, batch_first=True, dropout=0.3, bidirectional=True)
-        self.attn = nn.MultiheadAttention(embed_dim=hiddenSize*2, num_heads=2, batch_first=True)
-
-        self.linear = nn.Linear(hiddenSize*2, 1)
-        self.sigmoid = nn.Sigmoid()
-    
-    def forward(self, x):
-        lstmOut, _ = self.lstm(x)
-        # out = self.linear(lstmOut[:, -1, :])
-        attnOut, _ = self.attn(lstmOut, lstmOut, lstmOut)
-        out = self.linear(attnOut[:, -1, :])           # 用最後一個時間步
-        #out = self.sigmoid(out)
-        return out
-    
-
-
-
-
-# LSTM
-class LSTM(nn.Module):
-    def __init__(self, inputSize, hiddenSize, outputSize):
-        super(LSTM, self).__init__()
-        self.lstm = nn.LSTM(inputSize, hiddenSize, num_layers=3, batch_first=True,dropout=0.3, bidirectional=True)
-        self.linear = nn.Linear(hiddenSize*2, outputSize)
-
-    def forward(self, x):
-        lstmOut, _ = self.lstm(x)
-        out = self.linear(lstmOut[:, -1, :])
-        return out
     
 class MultiTaskLSTM(nn.Module):
     def __init__(self, input_size, hidden_size, output_size_reg):
         super(MultiTaskLSTM, self).__init__()
         self.lstm = nn.LSTM(input_size, hidden_size, num_layers=3, batch_first=True, dropout=0.3, bidirectional=True)
         self.attn = nn.MultiheadAttention(embed_dim=hidden_size*2, num_heads=2, batch_first=True)
-        self.fc_reg = nn.Linear(hidden_size*2, output_size_reg)  # 回歸分支
-        self.fc_cls = nn.Linear(hidden_size*2, 1)                # 分類分支
+        self.branch_dropout = nn.Dropout(0.3)
+        self.branch_bn = nn.BatchNorm1d(hidden_size*2)
+        # 回歸分支：兩層 FC + ReLU + Dropout
+        self.reg_head = nn.Sequential(
+            nn.Linear(hidden_size*2, hidden_size),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(hidden_size, output_size_reg)
+        )
+        # 分類分支：兩層 FC + ReLU + Dropout
+        self.cls_head = nn.Sequential(
+            nn.Linear(hidden_size*2, hidden_size),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(hidden_size, 1)
+        )
+
 
     def forward(self, x):
-        lstm_out, _ = self.lstm(x)
+        # LSTM + Attention
+        lstm_out, _ = self.lstm(x)  
         attn_out, _ = self.attn(lstm_out, lstm_out, lstm_out)
-        out = attn_out[:, -1, :]
-        reg_out = self.fc_reg(out)
-        cls_out = self.fc_cls(out)
+        # 取最後一個時間步作為特徵
+        feat = attn_out[:, -1, :]   
+
+        # 分支前正則化
+        feat = self.branch_dropout(feat)
+        feat = self.branch_bn(feat)
+
+        # 各自輸出
+        reg_out = self.reg_head(feat)
+        cls_out = self.cls_head(feat)
         return reg_out, cls_out
 
 
@@ -217,147 +202,138 @@ inputSize = len(featureCols)
 hiddenSize = 64
 numLayers = 2
 outputSize = len(target)
-
-#model = LSTM(inputSize, hiddenSize, outputSize).to(device)
 model = MultiTaskLSTM(inputSize, hiddenSize, outputSize).to(device)
-#損失函數
-criterion = nn.MSELoss()
+ 
+ # 損失函數：回歸 + 分類
+criterion_reg = nn.MSELoss()
+pos_weight   = torch.tensor([8.0], device=device)
+criterion_cls = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
-#優化器
+# 優化器：一次更新所有參數
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
-classification_model = LSTMClassifier(inputSize, hiddenSize).to(device)
-# criterion_c = nn.BCELoss()
-pos_weight = torch.tensor([8.0], device=device)  # 加強 minority class (Rain) 權重
-criterion_c = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-optimizer_c = torch.optim.Adam(classification_model.parameters(), lr=0.001)
+# （原本緊接在這裡的，應該就是你現在看到的兩段 for epoch in range(...)）
+# ========================
 
-#訓練
-numEpochs = 100
-bestLoss = float('inf')
-patience = 5
-wait=0
-trainLosses = []
-validLosses = []
+numEpochs     = 100
+best_val_loss_mt = float('inf')    # multi-task
 
-for epoch in range(numEpochs):
-    classification_model.train()
-    trainLoss = 0.0
-    for Xbatch, Ybatch in train_loader:
-        Xbatch = Xbatch.to(device)
-        Ybatch = Ybatch.float().to(device)
-
-        optimizer_c.zero_grad()
-        Ypred = classification_model(Xbatch)
-        loss = criterion_c(Ypred, Ybatch)
-        loss.backward()
-        optimizer_c.step()
-        
-
-        trainLoss += loss.item()*Xbatch.size(0)
-
-    trainLoss /= len(train_loader.dataset)
-
-    print(f"Epoch [{epoch + 1}/{numEpochs}], Train Loss: {trainLoss:.4f}")
-    trainLosses.append(trainLoss)
-
-    # validation
-    classification_model.eval()
-    valLoss = 0.0
-    with torch.no_grad():
-        for Xbatch, Ybatch in val_loader:
-            Xbatch = Xbatch.to(device)
-            Ybatch = Ybatch.float().to(device)
-
-            Ypred = classification_model(Xbatch)
-            loss = criterion(Ypred, Ybatch)
-            valLoss += loss.item() * Xbatch.size(0)
-
-    valLoss /= len(val_loader.dataset)
-    validLosses.append(valLoss)
-    print(f"Validation Loss: {valLoss:.4f}")
-    # Early Stopping
-    if valLoss < bestLoss:
-        bestLoss = valLoss
-        wait = 0
-        torch.save(classification_model.state_dict(), "./best_classifier.pt")  # 儲存最佳模型
-        print(f"Saved best model at epoch {epoch+1}")
-    else:
-        wait += 1
-        if wait >= patience:
-            print("Early stopping")
-            break
-
-
-# ========== Training Regression Model ==========
-numEpochs = 100
-bestLoss_reg = float('inf')
-wait = 0
-patience = 5
-trainLosses_reg = []
-validLosses_reg = []
+wait_mt          = 0
+patience_mt      = 5
 
 for epoch in range(numEpochs):
     model.train()
-    trainLoss = 0.0
-    for Xbatch, Ybatch in train_loader_reg:
-        Xbatch = Xbatch.to(device)
-        Ybatch = Ybatch.float().to(device)
+    total_train_loss = 0.0
+    for Xb, Yreg_b, Ycls_b in train_loader:
+        Xb       = Xb.to(device)
+        Yreg_b   = Yreg_b.to(device)
+        Ycls_b   = Ycls_b.unsqueeze(1).to(device)
 
         optimizer.zero_grad()
-        Ypred,_ = model(Xbatch)
-        loss = criterion(Ypred, Ybatch)
+        pred_reg, pred_cls = model(Xb)
+
+        loss_reg = criterion_reg(pred_reg, Yreg_b)
+        loss_cls = criterion_cls(pred_cls, Ycls_b)
+        loss     = loss_reg + loss_cls
+
         loss.backward()
         optimizer.step()
+        total_train_loss += loss.item() * Xb.size(0)
 
-        trainLoss += loss.item() * Xbatch.size(0)
+    avg_train = total_train_loss / len(train_loader.dataset)
 
-    trainLoss /= len(train_loader_reg.dataset)
-    trainLosses_reg.append(trainLoss)
-
-    # Validation
     model.eval()
-    valLoss = 0.0
+    total_val_loss = 0.0
     with torch.no_grad():
-        for Xbatch, Ybatch in val_loader_reg:
-            Xbatch = Xbatch.to(device)
-            Ybatch = Ybatch.float().to(device)
+        for Xb, Yreg_b, Ycls_b in val_loader:
+            Xb       = Xb.to(device)
+            Yreg_b   = Yreg_b.to(device)
+            Ycls_b   = Ycls_b.unsqueeze(1).to(device)
 
-            Ypred,_ = model(Xbatch)
-            loss = criterion(Ypred, Ybatch)
-            valLoss += loss.item() * Xbatch.size(0)
+            pred_reg, pred_cls = model(Xb)
+            loss_reg = criterion_reg(pred_reg, Yreg_b)
+            loss_cls = criterion_cls(pred_cls, Ycls_b)
+            total_val_loss += (loss_reg + loss_cls).item() * Xb.size(0)
 
-    valLoss /= len(val_loader_reg.dataset)
-    validLosses_reg.append(valLoss)
+    avg_val = total_val_loss / len(val_loader.dataset)
 
-    print(f"[Epoch {epoch+1}] Regressor Train Loss: {trainLoss:.4f}, Val Loss: {valLoss:.4f}")
-    
-    if valLoss < bestLoss_reg:
-        bestLoss_reg = valLoss
-        wait = 0
-        torch.save(model.state_dict(), "./best_model.pt")
-        print(f"✅ Saved best regression model at epoch {epoch+1}")
+    print(f"Epoch {epoch+1}/{numEpochs} — train: {avg_train:.4f}, val: {avg_val:.4f}")
+
+    if avg_val < best_val_loss_mt:
+        best_val_loss_mt = avg_val
+        wait_mt = 0
+        torch.save(model.state_dict(), "best_multitask_model.pt")
+        print("  ✅ saved best model")
     else:
-        wait += 1
-        if wait >= patience:
-            print("🛑 Early stopping regression training")
+        wait_mt += 1
+        if wait_mt >= patience_mt:
+            print("  🛑 early stopping")
             break
+# 回歸專用訓練迴圈 (Regression-Only Training)
+numEpochs = 100
+best_val_loss_reg = float('inf')    # best validation loss for regression
+wait_reg = 0
+patience_reg = 5
 
-'''
-classification_model.load_state_dict(torch.load("best_classifier.pt"))
-classification_model.eval()
-'''
+for epoch in range(numEpochs):
+    # 訓練階段
+    model.train()
+    train_loss_reg = 0.0
+    for Xb, Yb in train_loader_reg:            # train_loader_reg: 只輸出 (X, Y_reg)
+        Xb = Xb.to(device)
+        Yb = Yb.to(device)
+
+        optimizer.zero_grad()
+        pred_reg, _ = model(Xb)                # 多任務模型回傳 (regression, classification)
+        loss_reg = criterion_reg(pred_reg, Yb) # criterion_reg = nn.MSELoss()
+        loss_reg.backward()
+        optimizer.step()
+
+        train_loss_reg += loss_reg.item() * Xb.size(0)
+
+    train_loss_reg /= len(train_loader_reg.dataset)
+
+    # 驗證階段
+    model.eval()
+    val_loss_reg = 0.0
+    with torch.no_grad():
+        for Xb, Yb in val_loader_reg:          # val_loader_reg: 只輸出 (X, Y_reg)
+            Xb = Xb.to(device)
+            Yb = Yb.to(device)
+
+            pred_reg, _ = model(Xb)
+            loss_reg = criterion_reg(pred_reg, Yb)
+            val_loss_reg += loss_reg.item() * Xb.size(0)
+
+    val_loss_reg /= len(val_loader_reg.dataset)
+
+    print(f"[Epoch {epoch+1}] Reg Train Loss: {train_loss_reg:.4f}, Val Loss: {val_loss_reg:.4f}")
+
+    # Early Stopping 檢查
+    if val_loss_reg < best_val_loss_reg:
+        best_val_loss_reg = val_loss_reg
+        wait_reg = 0
+        torch.save(model.state_dict(), "best_regression_model.pt")
+        print("  ✅ Saved best regression model")
+    else:
+        wait_reg += 1
+        if wait_reg >= patience_reg:
+            print("  🛑 Early stopping regression training")
+            break
 
 with torch.no_grad():
     Xtest_tensor = torch.tensor(Xtest, dtype=torch.float32).to(device)
-    logits = classification_model(Xtest_tensor)
-    rain_probs = torch.sigmoid(logits).cpu().numpy().squeeze()
+    #logits = model(Xtest_tensor)
+    #rain_probs = torch.sigmoid(logits).cpu().numpy().squeeze()
+    _, cls_logits = model(Xtest_tensor)
+    rain_probs = torch.sigmoid(cls_logits).cpu().numpy().squeeze()
     rain_preds = (rain_probs >= 0.3).astype(int)
 
 # 計算 precision-recall curve
 precisions, recalls, thresholds = precision_recall_curve(Yctest.flatten(), rain_probs)
 
 # 計算 F1 分數
+thresholds = np.append(thresholds, 1.0)  
 f1_scores = 2 * (precisions * recalls) / (precisions + recalls + 1e-6)
 best_idx = np.argmax(f1_scores)
 best_threshold = thresholds[best_idx]
@@ -374,27 +350,16 @@ rain_preds = (rain_probs >= best_threshold).astype(int)
 print("=== Classification Report ===")
 print(classification_report(Yctest.flatten(), rain_preds, target_names=["No Rain", "Rain"]))
 
-# # test
-# rain_indices = np.where(rain_preds == 1)[0]
-
-# X_rain = Xtest[rain_indices]
-# Y_rain_true = Ytest[rain_indices]
-
-# # 測試模型載入
-# classification_model.load_state_dict(torch.load("best_classifier.pt"))
-# classification_model.eval()
-# with torch.no_grad():
-#     X_rain_tensor = torch.tensor(X_rain, dtype=torch.float32).to(device)
-#     #Y_rain_pred_scaled = model(X_rain_tensor).cpu().numpy()
-#     Y_rain_pred_scaled, _ = model(X_rain_tensor)
-#     Y_rain_pred_scaled = Y_rain_pred_scaled.cpu().numpy()
 
 # 測試模型載入
-classification_model.load_state_dict(torch.load("best_classifier.pt"))
-classification_model.eval()
-model.load_state_dict(torch.load("best_model.pt"))
+# # 測試模型載入
+# model.load_state_dict(torch.load("best_classifier.pt"))
+# model.eval()
+# model.load_state_dict(torch.load("best_model.pt"))
+# model.eval()
+# 只載入多任務模型
+model.load_state_dict(torch.load("best_multitask_model.pt"))
 model.eval()
-
 with torch.no_grad():
     Xtest_tensor = torch.tensor(Xtest, dtype=torch.float32).to(device)
     Y_pred_scaled, _ = model(Xtest_tensor)
@@ -408,17 +373,6 @@ Y_pred_real = targetScaler.inverse_transform(Y_pred_scaled)
 Y_test_real[:, precip_idx] = np.expm1(Y_test_real[:, precip_idx])
 Y_pred_real[:, precip_idx] = np.expm1(Y_pred_real[:, precip_idx])
 
-
-'''
-# 反標準化 + 還原 log1p
-precip_idx = target.index("Precipitation")
-
-Y_rain_true_real = targetScaler.inverse_transform(Y_rain_true)
-Y_rain_pred_real = targetScaler.inverse_transform(Y_rain_pred_scaled)
-
-Y_rain_true_real[:, precip_idx] = np.expm1(Y_rain_true_real[:, precip_idx])
-Y_rain_pred_real[:, precip_idx] = np.expm1(Y_rain_pred_real[:, precip_idx])
-'''
 # 評估回歸效果
 print("\n=== Multi-Target Evaluation on All Test Samples ===")
 for i, var in enumerate(target):
