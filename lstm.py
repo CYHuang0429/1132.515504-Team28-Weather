@@ -153,9 +153,10 @@ train_loader_reg  = DataLoader(train_dataset_reg, batch_size=batch_size, shuffle
 val_loader_reg    = DataLoader(val_dataset_reg,   batch_size=batch_size, shuffle=False)
 
 
-for Xbatch, Ybatch in train_loader:
-    print("X_batch shape:",Xbatch.shape)
-    print("Y_batch shape:",Ybatch.shape)
+for Xbatch, Yreg_batch, Ycls_batch in train_loader:
+    print("X_batch shape:",    Xbatch.shape)
+    print("Y_reg_batch shape:", Yreg_batch.shape)
+    print("Y_cls_batch shape:", Ycls_batch.shape)
     break
     
 class MultiTaskLSTM(nn.Module):
@@ -200,7 +201,6 @@ class MultiTaskLSTM(nn.Module):
 
 inputSize = len(featureCols)
 hiddenSize = 64
-numLayers = 2
 outputSize = len(target)
 model = MultiTaskLSTM(inputSize, hiddenSize, outputSize).to(device)
  
@@ -321,14 +321,42 @@ for epoch in range(numEpochs):
             print("  🛑 Early stopping regression training")
             break
 
+model.eval()
+val_probs = []
+with torch.no_grad():
+    for Xb, _, Ycls_b in val_loader:      # val_loader 對應驗證集
+        Xb = Xb.to(device)
+        _, cls_logits = model(Xb)
+        val_probs.extend(torch.sigmoid(cls_logits).cpu().numpy().squeeze())
+
+val_probs = np.array(val_probs)
+Ycval_flat = Ycval.flatten()
+
+
+precisions_val, recalls_val, thresholds_val = precision_recall_curve(Ycval_flat, val_probs)
+thresholds_val = np.append(thresholds_val, 1.0)
+f1_scores_val = 2 * (precisions_val * recalls_val) / (precisions_val + recalls_val + 1e-6)
+best_idx_val = np.argmax(f1_scores_val)
+best_threshold = thresholds_val[best_idx_val]
+
+print(f"[Validation] Best Threshold: {best_threshold:.3f}  Precision: {precisions_val[best_idx_val]:.3f}  Recall: {recalls_val[best_idx_val]:.3f}  F1: {f1_scores_val[best_idx_val]:.3f}")
+
+
+
+
+
+
 with torch.no_grad():
     Xtest_tensor = torch.tensor(Xtest, dtype=torch.float32).to(device)
     #logits = model(Xtest_tensor)
     #rain_probs = torch.sigmoid(logits).cpu().numpy().squeeze()
     _, cls_logits = model(Xtest_tensor)
     rain_probs = torch.sigmoid(cls_logits).cpu().numpy().squeeze()
-    rain_preds = (rain_probs >= 0.3).astype(int)
 
+rain_preds = (rain_probs >= best_threshold).astype(int)
+
+print("=== Classification Report on Test Set ===")
+print(classification_report(Yctest.flatten(), rain_preds, target_names=["No Rain", "Rain"]))
 # 計算 precision-recall curve
 precisions, recalls, thresholds = precision_recall_curve(Yctest.flatten(), rain_probs)
 
@@ -358,7 +386,9 @@ print(classification_report(Yctest.flatten(), rain_preds, target_names=["No Rain
 # model.load_state_dict(torch.load("best_model.pt"))
 # model.eval()
 # 只載入多任務模型
-model.load_state_dict(torch.load("best_multitask_model.pt"))
+model.load_state_dict(
+    torch.load("best_regression_model.pt", map_location=device)
+)
 model.eval()
 with torch.no_grad():
     Xtest_tensor = torch.tensor(Xtest, dtype=torch.float32).to(device)
