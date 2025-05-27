@@ -44,7 +44,7 @@ for col in ["Precipitation", "RelativeHumidity", "WindSpeed", "Temp_DewDiff"]:
     weather[f"{col}_t-1"] = weather[col].shift(1)
 
 # 處理缺失值
-weather = weather.dropna().reset_index(drop=True)
+weather = weather.dropna()
 
 # 計算每個特徵的MSE
 target = ["AirTemperature", "Precipitation", "WindSpeed"]
@@ -72,7 +72,7 @@ featureCols = [
     "RelativeHumidity", "SeaLevelPressure", "StationPressure", "WindSpeed", "WindDirection",
     "Temp_DewDiff", "Delta_StationPressure", 
     "Precipitation_t-1", "RelativeHumidity_t-1",
-    "WindSpeed_t-1", "Temp_DewDiff_t-1", "RainBinary",
+    "WindSpeed_t-1", "Temp_DewDiff_t-1", 
     
     
 ]
@@ -409,7 +409,7 @@ Y_test_real[:, precip_idx] = np.expm1(Y_test_real[:, precip_idx])
 Y_pred_real[:, precip_idx] = np.expm1(Y_pred_real[:, precip_idx])
 
 
-
+'''
 # 反標準化 + 還原 log1p
 precip_idx = target.index("Precipitation")
 
@@ -418,23 +418,23 @@ Y_rain_pred_real = targetScaler.inverse_transform(Y_rain_pred_scaled)
 
 Y_rain_true_real[:, precip_idx] = np.expm1(Y_rain_true_real[:, precip_idx])
 Y_rain_pred_real[:, precip_idx] = np.expm1(Y_rain_pred_real[:, precip_idx])
-
+'''
 # 評估回歸效果
-print("\n=== Multi-Target Evaluation on Rainy Hours ===")
+print("\n=== Multi-Target Evaluation on All Test Samples ===")
 for i, var in enumerate(target):
-    mae = mean_absolute_error(Y_rain_true_real[:, i], Y_rain_pred_real[:, i])
-    rmse = np.sqrt(mean_squared_error(Y_rain_true_real[:, i], Y_rain_pred_real[:, i]))
-    r2 = r2_score(Y_rain_true_real[:, i], Y_rain_pred_real[:, i])
+    mae = mean_absolute_error(Y_test_real[:, i], Y_pred_real[:, i])
+    rmse = np.sqrt(mean_squared_error(Y_test_real[:, i], Y_pred_real[:, i]))
+    r2 = r2_score(Y_test_real[:, i], Y_pred_real[:, i])
     print(f"{var:<15} → MAE: {mae:.2f}, RMSE: {rmse:.2f}, R²: {r2:.4f}")
 
 # 畫圖：預測 vs 真實的降雨量（只針對預測為下雨的樣本）
 plt.figure(figsize=(10, 5))
 precip_idx = target.index("Precipitation")
-plt.plot(Y_rain_true_real[:, precip_idx], label='True Rainfall', marker='o')
-plt.plot(Y_rain_pred_real[:, precip_idx], label='Predicted Rainfall', marker='x')
+plt.plot(Y_test_real[:, precip_idx], label='True Rainfall', marker='o')
+plt.plot(Y_pred_real[:, precip_idx], label='Predicted Rainfall', marker='x')
 plt.xlabel("Sample Index")
 plt.ylabel("Precipitation (mm)")
-plt.title("Predicted vs Actual Rainfall on Rainy Hours")
+plt.title("Predicted vs Actual Rainfall on All Test Samples")
 plt.legend()
 plt.grid(True)
 plt.tight_layout()
@@ -462,11 +462,11 @@ plt.show()
 
 for i, var in enumerate(target):
     plt.figure(figsize=(10, 4))
-    plt.plot(Y_rain_true_real[:, i], label=f'True {var}', marker='o')
-    plt.plot(Y_rain_pred_real[:, i], label=f'Predicted {var}', marker='x')
+    plt.plot(Y_test_real[:, i], label=f'True {var}', marker='o')
+    plt.plot(Y_pred_real[:, i], label=f'Predicted {var}', marker='x')
     plt.xlabel("Sample Index")
     plt.ylabel(var)
-    plt.title(f"{var} Prediction on Rainy Hours")
+    plt.title(f"{var} Prediction on All Test Samples")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
@@ -474,14 +474,14 @@ for i, var in enumerate(target):
 
 # 整理並輸出含「預測是否下雨」欄位的結果
 output_df = pd.DataFrame({
-    "True_AirTemperature": Y_rain_true_real[:, 0],
-    "Pred_AirTemperature": Y_rain_pred_real[:, 0],
-    "True_Precipitation": Y_rain_true_real[:, 1],
-    "Pred_Precipitation": Y_rain_pred_real[:, 1],
-    "True_WindSpeed": Y_rain_true_real[:, 2],
-    "Pred_WindSpeed": Y_rain_pred_real[:, 2],
+    "True_AirTemperature": Y_test_real[:, 0],
+    "Pred_AirTemperature": Y_pred_real[:, 0],
+    "True_Precipitation": Y_test_real[:, 1],
+    "Pred_Precipitation": Y_pred_real[:, 1],
+    "True_WindSpeed": Y_test_real[:, 2],
+    "Pred_WindSpeed": Y_pred_real[:, 2],
     "True_RainBinary": Yctest.flatten(),
-    "Pred_RainBinary": rain_preds,  # 新增的欄位
+    "Pred_RainBinary": rain_preds,
 })
 
 output_df.index.name = "SampleIndex"
