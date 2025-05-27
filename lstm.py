@@ -227,7 +227,7 @@ for epoch in range(numEpochs):
     for Xb, Yreg_b, Ycls_b in train_loader:
         Xb       = Xb.to(device)
         Yreg_b   = Yreg_b.to(device)
-        Ycls_b   = Ycls_b.unsqueeze(1).to(device)
+        Ycls_b   = Ycls_b.view(-1,1).to(device)
 
         optimizer.zero_grad()
         pred_reg, pred_cls = model(Xb)
@@ -248,7 +248,7 @@ for epoch in range(numEpochs):
         for Xb, Yreg_b, Ycls_b in val_loader:
             Xb       = Xb.to(device)
             Yreg_b   = Yreg_b.to(device)
-            Ycls_b   = Ycls_b.unsqueeze(1).to(device)
+            Ycls_b   = Ycls_b.view(-1,1).to(device)
 
             pred_reg, pred_cls = model(Xb)
             loss_reg = criterion_reg(pred_reg, Yreg_b)
