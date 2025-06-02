@@ -247,11 +247,11 @@ for epoch in range(numEpochs):
         best_val_loss_mt = avg_val
         wait_mt = 0
         torch.save(model.state_dict(), "best_multitask_model.pt")
-        print("  ✅ saved best model")
+        print("  saved best model")
     else:
         wait_mt += 1
         if wait_mt >= patience_mt:
-            print("  🛑 early stopping")
+            print("  early stopping")
             break
 
 model.load_state_dict(torch.load("best_multitask_model.pt", map_location=device))
@@ -325,11 +325,11 @@ for epoch in range(numEpochs):
         best_val_loss_reg = val_loss_reg
         wait_reg = 0
         torch.save(model.state_dict(), "best_regression_model.pt")
-        print("  ✅ Saved best regression model")
+        print("  Saved best regression model")
     else:
         wait_reg += 1
         if wait_reg >= patience_reg:
-            print("  🛑 Early stopping regression training")
+            print("  Early stopping regression training")
             break
 
 model.eval()
@@ -468,6 +468,6 @@ output_df = pd.DataFrame({
 
 output_df.index.name = "SampleIndex"
 output_df.to_csv("RainyHour_Predictions.csv", index=True)
-print("✅ 預測結果（含預測是否下雨）已儲存至 RainyHour_Predictions.csv")
+print("預測結果（含預測是否下雨）已儲存至 RainyHour_Predictions.csv")
 
 #print(weather.info)
