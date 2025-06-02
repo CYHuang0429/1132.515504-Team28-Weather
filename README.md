@@ -8,6 +8,13 @@ Run the following command to install all dependencies:
 
 ```bash
 pip install torch numpy pandas matplotlib seaborn scikit-learn
+```
+
+Run for the model
+```bash
+python lstm.py
+```
+
 
 ## References
 [Value Prediction Network](https://notesonai.com/value+prediction+network)
