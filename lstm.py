@@ -28,11 +28,9 @@ weather[["AirTemperature", "DewPointTemperature", "Precipitation", "Precipitatio
 
 weather["Precipitation"] = np.log1p(weather["Precipitation"])  # log1p轉換
 weather["RainBinary"] = (weather["Precipitation"] > 0).astype(int)  # 二元化降雨量
-# 基本特徵
 weather["Temp_DewDiff"] = weather["AirTemperature"] - weather["DewPointTemperature"]
 weather["Delta_StationPressure"] = weather["StationPressure"] - weather["StationPressure"].shift(1)
 
-# 延遲特徵（可根據需求加更多 lag）
 for col in ["Precipitation", "RelativeHumidity", "WindSpeed", "Temp_DewDiff"]:
     weather[f"{col}_t-1"] = weather[col].shift(1)
 
@@ -96,7 +94,7 @@ for i in range(len(Xall) - windowSize):
 X = np.array(X)
 Y = np.array(Y)
 Yc = np.array(Yc)
-# 自定義Dataset
+
 class WeatherDataset(Dataset):
     def __init__(self, X, Y):
         self.X = torch.tensor(X, dtype=torch.float32)
@@ -112,7 +110,7 @@ class WeatherMultiOutputDataset(Dataset):
     def __init__(self, X, Y_reg, Y_cls):
         self.X = torch.tensor(X, dtype=torch.float32)
         self.Y_reg = torch.tensor(Y_reg, dtype=torch.float32)  # 回歸目標
-        self.Y_cls = torch.tensor(Y_cls, dtype=torch.float32)  # 分類目標（二值）
+        self.Y_cls = torch.tensor(Y_cls, dtype=torch.float32)  # 分類目標
 
     def __len__(self):
         return len(self.X)
@@ -180,14 +178,10 @@ class MultiTaskLSTM(nn.Module):
         # LSTM + Attention
         lstm_out, _ = self.lstm(x)  
         attn_out, _ = self.attn(lstm_out, lstm_out, lstm_out)
-        # 取最後一個時間步作為特徵
         feat = attn_out[:, -1, :]   
-
-        # 分支前正則化
         feat = self.branch_dropout(feat)
         feat = self.branch_bn(feat)
 
-        # 各自輸出
         reg_out = self.reg_head(feat)
         cls_out = self.cls_head(feat)
         return reg_out, cls_out
@@ -204,9 +198,6 @@ criterion_cls = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([8.0], device=devic
 
 # 優化器：一次更新所有參數
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-
-# （原本緊接在這裡的，應該就是你現在看到的兩段 for epoch in range(...)）
-# ========================
 
 numEpochs     = 100
 best_val_loss_mt = float('inf')    # multi-task
@@ -272,7 +263,7 @@ for pw in [1.0, 2.0, 4.0, 8.0, 16.0]:
     criterion_cls_tmp = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([pw], device=device))
     tp = fn = 0
     with torch.no_grad():
-        for Xb, _, Ycls_b in val_loader:        # 用 val_loader（验证集）评估
+        for Xb, _, Ycls_b in val_loader:       
             Xb = Xb.to(device)
             _, logits = model(Xb)
             probs = torch.sigmoid(logits)
@@ -299,13 +290,13 @@ for epoch in range(numEpochs):
     # 訓練階段
     model.train()
     train_loss_reg = 0.0
-    for Xb, Yb in train_loader_reg:            # train_loader_reg: 只輸出 (X, Y_reg)
+    for Xb, Yb in train_loader_reg:            
         Xb = Xb.to(device)
         Yb = Yb.to(device)
 
         optimizer.zero_grad()
-        pred_reg, _ = model(Xb)                # 多任務模型回傳 (regression, classification)
-        loss_reg = criterion_reg(pred_reg, Yb) # criterion_reg = nn.MSELoss()
+        pred_reg, _ = model(Xb)                
+        loss_reg = criterion_reg(pred_reg, Yb) 
         loss_reg.backward()
         optimizer.step()
 
@@ -317,7 +308,7 @@ for epoch in range(numEpochs):
     model.eval()
     val_loss_reg = 0.0
     with torch.no_grad():
-        for Xb, Yb in val_loader_reg:          # val_loader_reg: 只輸出 (X, Y_reg)
+        for Xb, Yb in val_loader_reg:          
             Xb = Xb.to(device)
             Yb = Yb.to(device)
 
@@ -378,7 +369,7 @@ rain_preds = (rain_probs >= best_threshold).astype(int)
 print("=== Classification Report on Test Set ===")
 print(classification_report(Yctest.flatten(), rain_preds, target_names=["No Rain", "Rain"]))
 
-# 只載入多任務模型
+
 model.load_state_dict(
     torch.load("best_regression_model.pt", map_location=device)
 )
@@ -463,7 +454,7 @@ for i, var in enumerate(target):
     plt.tight_layout()
     plt.show()
 
-# 整理並輸出含「預測是否下雨」欄位的結果
+
 output_df = pd.DataFrame({
     "True_AirTemperature": Y_test_real[:, 0],
     "Pred_AirTemperature": Y_pred_real[:, 0],
