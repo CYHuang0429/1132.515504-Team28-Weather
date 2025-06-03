@@ -1,12 +1,13 @@
 # 1132.515504-Team28-Weather
-NYCU 1132.515504 Final Project (Team 28)
-Topic: NYCU campus weather forecast
-Members: 113550182 黃禎鈺
-         113550123 蔡承軒
-         112550109 楊榮竣
+NYCU 1132.515504 Final Project (Team 28)  
+Topic: NYCU campus weather forecast  
+Members:  
+113550182 黃禎鈺  
+113550123 蔡承軒  
+112550109 楊榮竣 
 
 ## Specifications
-This is a project about improving the spacial accuracy of weather forecasts, and learn the local Hsinchu weather data with AI.
+This is a project about improving the spacial accuracy of weather forecasts, and learn the local Hsinchu weather data with AI.  
 The file structure for this project is as follows:
 
 ```
@@ -14,7 +15,7 @@ The file structure for this project is as follows:
 ├── Data
 │   ├── EastHsinchu // unused data
 │   └── Hsinchu // the dataset we used to train
-├── Fugure // some results it profuced
+├── Figure // some results it profuced
 ├── Masters
 │   └── Master_Hsinchu.csv // our master data
 ├── lstm.py // our main model
