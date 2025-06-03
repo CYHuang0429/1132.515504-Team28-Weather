@@ -32,6 +32,7 @@ pip install torch numpy pandas matplotlib seaborn scikit-learn
 ```
 
 Run for the model
+(Running python 3.12.6)
 ```bash
 python lstm.py
 ```
