@@ -38,5 +38,5 @@ python lstm.py
 
 
 ## References
-[Baseline Model](https://medium.com/@ozdogar/time-series-forecasting-using-lstm-pytorch-implementation-86169d74942e)
+[Baseline Model](https://medium.com/@ozdogar/time-series-forecasting-using-lstm-pytorch-implementation-86169d74942e)  
 [Value Prediction Network](https://notesonai.com/value+prediction+network)
